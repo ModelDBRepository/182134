@@ -1,0 +1,2213 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2010, The University Of Michigan
+// 	
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   No Distribution without permission of William Stacey
+//   wstacey@umich.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+/*{load_file("pyrkop.tem")}
+{load_file("bwb.tem")}
+{load_file("ok.tem")}
+{load_file("../parameters/synapses.tem")}
+{load_file("../parameters/manycells.tem")} */
+
+begintemplate TGbignet2
+
+external cvode
+
+
+// PUBLIC VARIABLES
+
+// PUBLIC REFERENCES
+public pnm   
+
+// PUBLIC METHODS
+public setScatteredVoltages, activeSynapses, pr, signalSynapse, activeSynapsesRandom, activeSynapsesZero, connectNetwork, writeVoltages, recordVoltages, noiseStim, nc, nil, noiselist, signallist, par_gaps, shortspikes, shortnonrandomspikes, singlecellnonrandom //, ncstim
+public randomPyrThenStim, writesingleVoltage, writenoise, recordnoise, manualParamsg, addAntennaDC, activatePyrSynapses, activateBaskSynapses, activateAntSynapses, writeParameters, setSeed
+
+objref pnm  
+objref synParamSet, noisySynParamSet, synCellSet, noisepyrlist, noisebasklist, nc, nil, noiselist, signallist, par_gaps, weightedvec, iapps, rrr
+strdef xyzStr
+
+weightedvec= new Vector()
+
+	manParamFlag=0
+	//dipoleFlag=1  //FLAGS DON'T WORK HERE!!! Must be in init() 
+	gmax_basktopyr=0
+	gmax_pyrgap=0   //For manual parameter entry
+
+
+
+// =================================================================================================
+//
+// init(Npyr, Nbask, Nolm)
+//
+// =================================================================================================
+proc init() {
+	
+	//print manParamFlag, "entered init"
+
+	oneCell = 0   //I don't know 
+	nModules  = 1    // set up for # of cell columns, was 4 in paper  ###changed to 1 on 3/11/08
+	debugFlag = 1   //to show where in the sim you are
+	dipoleFlag=1
+	dFlag = 1	//to print 3d information when cells are created
+	
+	synCellSet = new CellParamSet()  //reads in the cells.par into synCellSet
+	
+    Npyr  = synCellSet.cellSet.object(0).N 
+    Nbask = synCellSet.cellSet.object(1).N
+    Nolm  = synCellSet.cellSet.object(2).N
+   	Nant = synCellSet.cellSet.object(3).N
+    Nnoise  = Npyr + Nbask + Nant //one noise synapse on each pyr and bask AND ANT
+    
+    Npyr  = Npyr      
+    Nbask = Nbask 
+    Nolm  = Nolm  
+	Nant = Nant //I have no idea what the purpose of this is
+    Nnoise = Nnoise  //added
+    
+    N     = Npyr+Nbask+Nant+Nolm//+Nnoise   //added the Nnoise
+   
+	pnm = new ParallelNetManager(nModules*N)
+   
+    if (debugFlag) print "Assigning GIDs"
+	//assignGIDs()
+	pnm.round_robin()
+	
+	if (debugFlag) print "Creating cells"
+    createCells()
+	
+      if (debugFlag) print "Connecting network"
+
+    //connectNetwork()   //****placed in realone.hoc
+    if(nModules>1) connectNetworkInterModules()
+    //activeSynapses()
+	//activeSynapsesZero()   //***placed in realone.hoc
+	signallist=new List()
+	
+}
+
+//set global index for Random123 (affects noisy stimulation delivered to cells)
+proc setSeed() {
+
+	rrr = new Random()
+	rrr.Random123(0,0)
+	rrr.Random123_globalindex($1) //sets global index of Random123 generator (need different global index for different simulations)
+	for i=0, Npyr+Nbask+Nant-1 {
+		rrr.Random123(N+i,0)  //sets index for different cells, so that different cells receive completely different noisy input
+		rrr.seq(0)
+	}
+} 
+
+
+// =================================================================================================
+//
+// iterators
+//		pyrIter
+//		baskIter
+//		olmIter
+//
+// =================================================================================================
+iterator pyrIter() { local i, ii
+
+	for ii = 0, nModules-1 {
+		 print "Npyr = ",Npyr
+		for i=0, Npyr-1 {
+		
+			$&1 = i
+			$&2 = i+ii*N
+			iterator_statement
+		}
+	}
+//if (debugFlag) print "pyrIter"
+}
+
+iterator antIter() { local i, ii
+
+	for ii = 0, nModules-1 {
+		
+		print "Nant = ",Nant
+		for i=0, Nant-1 {
+		
+			$&1 = i
+			$&2 = i+Npyr+Nbask+ii*N
+			iterator_statement
+		}
+	}
+//if (debugFlag) print "antIter"
+}
+
+iterator baskIter() { local i, ii
+
+	for ii = 0, nModules-1{
+	for i=0,Nbask-1 {
+		
+		$&1 = i
+		$&2 = i+Npyr+ii*N
+		iterator_statement
+	}
+	}
+//if (debugFlag) print "baskIter"
+}
+
+iterator olmIter() { local i, ii
+
+	for ii = 0, nModules-1{
+	for i=0,Nolm-1 {
+		
+		$&1 = i
+		$&2 = i+Npyr+Nant+Nbask+ii*N
+		iterator_statement
+	}
+	}
+//if (debugFlag) print "OLMiter"
+}
+
+iterator noiseIter() { local i, ii
+
+	for ii = 0, nModules-1{
+	for i=0,Nnoise-1 {
+		
+		$&1 = i
+		$&2 = i+Npyr+Nbask+Nolm+ii*N
+		iterator_statement
+	}
+	}
+//if (debugFlag) print "Noiseiter"
+}
+
+
+
+// =================================================================================================
+//
+// assignGIDs()
+// not called, rather the round_robin is called
+// =================================================================================================
+proc assignGIDs() { local i, gid
+	
+	i   = 0
+	gid = 0
+	
+	if (debugFlag) print "ID#", pnm.pc.id, " NHOST:", pnm.pc.nhost
+	
+	if (pnm.pc.nhost>1) {
+	
+		for pyrIter(&i, &gid)   pnm.set_gid2node(gid, i%(pnm.pc.nhost-1))
+		for baskIter(&i,&gid)   pnm.set_gid2node(gid, pnm.pc.nhost-1)
+		for olmIter(&i, &gid)   pnm.set_gid2node(gid, pnm.pc.nhost-1)
+		for noiseIter(&i, &gid)   pnm.set_gid2node(gid, pnm.pc.nhost-1)
+
+		
+	}else{
+		
+		for pyrIter(&i, &gid)   pnm.set_gid2node(gid, 0)
+		for baskIter(&i,&gid)   pnm.set_gid2node(gid, 0)
+		for olmIter(&i, &gid)   pnm.set_gid2node(gid, 0)
+		for noiseIter(&i, &gid) pnm.set_gid2node(gid, 0)
+	}
+}
+
+
+
+// =================================================================================================
+//
+// createCells()    Now this also reads in xyz.dat to create the 3d placement of the cells
+//
+// =================================================================================================
+proc createCells() {local gc, i, pNN, gid, x3, y3, z3, num localobj parRef, fo
+
+	synParamSet = new SynParamSet(pnm.pc.id)
+	noisySynParamSet = new NoisySynParamSet(pnm.pc.id)	
+		pNN = 0			
+		for i=0,  synCellSet.cellSet.count()-1 {				
+			if(strcmp(synCellSet.cellSet.object(i).name, "Pyr")==0) {							
+				parRef = synCellSet.cellSet.object(i)
+				pNN = pNN + 1
+			}			
+		}				
+		if(pNN!=1) print "ERROR pNN PYR"
+			
+	createPyrCells(parRef)
+		pNN = 0		
+		for i=0,  synCellSet.cellSet.count()-1 {				
+			if(strcmp(synCellSet.cellSet.object(i).name, "Bask")==0) {							
+				parRef = synCellSet.cellSet.object(i)
+				pNN = pNN + 1
+			}			
+		}				
+		if(pNN!=1) print "ERROR pNN BASK"	
+	createBaskCells(parRef)	
+			pNN = 0			
+		for i=0,  synCellSet.cellSet.count()-1 {				
+			if(strcmp(synCellSet.cellSet.object(i).name, "Ant")==0) {							
+				parRef = synCellSet.cellSet.object(i)
+				pNN = pNN + 1
+			}			
+		}				
+		if(pNN!=1) print "ERROR pNN Ant"
+	createAntCells(parRef)	
+		
+		pNN = 0			
+		for i=0,  synCellSet.cellSet.count()-1 {				
+			if(strcmp(synCellSet.cellSet.object(i).name, "OLM")==0) {							
+				parRef = synCellSet.cellSet.object(i)
+				pNN = pNN + 1
+			}			
+		}				
+		if(pNN!=1) print "ERROR pNN OLM"		
+	createOLMCells(parRef)
+
+    for ii=0, nModules-1 {   //no method yet how to do this for different Modules
+	fo = new File()
+	fo.ropen("parameters/chrisxyz.dat")   //this way each Module will have same xyz, will have to re-set with an ii factor 
+	if (dFlag) print " +++++++++++++++++++==================translating.............."
+	while( !fo.eof() ) {	
+		fo.gets( xyzStr )		
+		num = sscanf( xyzStr, "%d %d %d %d", &gid, &x3, &y3, &z3)
+
+		if (dFlag){
+					//print ".....................this is before translating"
+					print gid, pnm.pc.gid2obj(gid)
+					pnm.pc.gid2obj(gid).soma {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+						
+					}
+					if (gid<Npyr) {  //only for pyr cells
+ 					  pnm.pc.gid2obj(gid).Bdend {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					  pnm.pc.gid2obj(gid).Adend1 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					  pnm.pc.gid2obj(gid).Adend3 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					} //gid < 81
+		} //if dFlag
+
+		pnm.pc.gid2obj(gid).soma{			
+			translate(x3, y3, z3)
+			define_shape()
+		}
+		if (dFlag){
+					print "......................AFTER translating"		
+					print gid, pnm.pc.gid2obj(gid)
+					pnm.pc.gid2obj(gid).soma {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+					if (gid<Npyr) {  //only for pyr cells
+ 					  pnm.pc.gid2obj(gid).Bdend {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					  pnm.pc.gid2obj(gid).Adend1 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					  pnm.pc.gid2obj(gid).Adend3 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					  }
+					} //gid < 81
+		} //if dFlag
+
+	}  //while
+	fo.close()
+		for j=Npyr+Nbask, Npyr+Nbask+Nant-1 {
+			
+			if (j%2) {
+				pnm.pc.gid2obj(j).soma {			
+					translate(0, -200 + ((400/Nant)*(j-Npyr-Nbask)), 0)
+					define_shape()
+				} 
+			} else {
+				pnm.pc.gid2obj(j).soma {			
+					translate(0, 0, -200 + ((400/Nant)*(j-Npyr-Nbask)))   //(j-150) * 4)
+					define_shape()
+				} 
+			}
+
+			if (dFlag){
+				//print "......................AFTER translating"		
+				print j, pnm.pc.gid2obj(j)
+				pnm.pc.gid2obj(j).soma {
+					print secname()
+					for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+				}
+				
+				pnm.pc.gid2obj(j).Bdend {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				pnm.pc.gid2obj(j).Adend1 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				pnm.pc.gid2obj(j).Adend3 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				
+			}   //if dFlag
+
+		} //for j
+
+     }  //for ii
+	if (debugFlag) print "finished createcells"
+}
+
+
+//===================================================================
+//
+//   translate(x in um, y in um, z in um)
+//
+//=======================================================
+
+proc translate() { local ii
+  for ii=0,n3d()-1 {
+    //pt3dchange(ii, x3d(ii)+$1, y3d(ii)+$2, z3d(ii)+$3, diam3d(ii))  //this one ruins the positioning, because the z3d is set as a (+100 label) 
+	//pt3dchange(ii, $1, $2, $3, diam3d(ii))  //when I did it this way, it reset every piece of the soma to one position
+	pt3dchange(ii, x3d(ii)+$1, y3d(ii)+$2, $3, diam3d(ii))  //this one works, but only because of how this implementation goes, which puts all cellular data into xy and position into z.  So I use explicit z and relative xy
+  }
+}
+
+
+
+
+// =================================================================================================
+//
+// createPyrCells( CellParam (object))
+//
+// =================================================================================================
+proc createPyrCells() {local i, j localobj c, r
+	r = new Random(pnm.pc.id+startsw())	
+	i   = 0
+	gid = 0
+	x3=0
+	y3=0
+	z3=0
+	cnt=0
+
+    for pyrIter(&i, &gid) {    	
+    	if (pnm.gid_exists(gid)) {		
+		/* if(gid%N==0) { // Passive cell			
+				//c = new PYRkop(gid, 0, $o1.iappSsd, 0, $o1.iappAsd, $o1.iappUnits)
+				c = new PYRkop(gid, 0, 0, 0, 0, $o1.iappUnits)
+				
+//### added stim to first 20 cells 7/8/8
+		//}else if(gid<20){
+				//c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform($o1.iappAl, $o1.iappAh), $o1.iappAsd, $o1.iappUnits)
+				//c = new PYRkop(gid, 0, 94.2, 180, 94.2, 0)				
+		}else{	 */		
+			c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, 0, r.uniform($o1.iappAl, $o1.iappAh), 0, $o1.iappUnits)
+			if (0) {
+				if (gid%N<12/40*N && int(gid/N)<2 ) {					
+					c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform(330, 349), $o1.iappAsd, $o1.iappUnits)
+					//c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform(300, 310), $o1.iappAsd, $o1.iappUnits)
+				
+				} else {				
+					if (gid%N<12/40*N && int(gid/N)>=2) {					
+						//c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform(820, 849), $o1.iappAsd, $o1.iappUnits)			
+						c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform(350, 400), $o1.iappAsd, $o1.iappUnits)			
+					
+					}else{					
+						c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform($o1.iappAl, $o1.iappAh), $o1.iappAsd, $o1.iappUnits)
+					}
+				} //if gid%N<12/40*N
+			}  //If 0
+		//}// if gid%N==0
+		
+		pnm.register_cell(gid, c )
+		if (debugFlag) print "Cell # ", gid, " is a pyr cell"
+		addSyn(synParamSet, gid, "Pyr")	
+		addNoisySyn(noisySynParamSet,gid,"Pyr") //CF: this function adds the noisesyn synapses
+		pnm.pc.gid2obj(gid).noisysynlist.o(0).gid = gid
+		
+
+		c.soma {
+			define_shape()
+			//translate(gid, gid*2, gid*3)
+			//define_shape()
+		}
+		
+		//pop_section()
+	if (dFlag){
+		print gid, "pyr   ", c
+		c.soma {
+			//print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+		c.Bdend {
+			//print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+		c.Adend1 {
+			//print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+		c.Adend3 {
+			//print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+		if (gid==-1) {   // no longer used, was for testing on the fly
+			c.soma {
+				translate(2222,2222,2222)
+				define_shape()  //this is necessary to translate the connected sections
+				print secname(), "             ............NOW REDONE   "
+				for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+			c.Bdend {
+				print secname()
+				for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+			c.Adend1 {
+				print secname()
+				for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+			c.Adend3 {
+				print secname()
+				for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}  //adend3
+		} // if gid== -1
+	}// if dFlag
+	
+	
+			
+    }//gidexists
+}//pyriter
+
+
+
+}//function
+
+
+
+// =================================================================================================
+//
+// createAntCells( CellParam (object)); this is just a copied, then revised version of createPyrCells
+//
+// =================================================================================================
+
+proc createAntCells() { local i, j localobj c, r
+	r = new Random(pnm.pc.id+startsw())	
+	i   = 0
+	gid = 0
+	x3=0
+	y3=0
+	z3=0
+	cnt=0
+
+    	for antIter(&i, &gid) {    	//antIter iterates over all modules and all cells within each module
+    	    if (pnm.gid_exists(gid)) {				
+			//c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, $o1.iappSsd, r.uniform($o1.iappAl, $o1.iappAh), $o1.iappAsd, $o1.iappUnits)
+			c = new PYRkop(gid, r.uniform($o1.iappSl, $o1.iappSh)+0*(gid*80/400+250)*2.5e-1, 0, r.uniform($o1.iappAl, $o1.iappAh), 0, $o1.iappUnits)			
+			pnm.register_cell(gid, c )  //***this is very important: it actually creates the cell defined above as 'c'
+			//addSyn defined approximately 700 lines later
+			addSyn(synParamSet, gid, "Pyr")	
+			addNoisySyn(noisySynParamSet,gid,"Ant") //CF: this function adds the noisesyn synapses
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).gid = gid
+
+			
+			if (debugFlag) print "Cell # ", gid, " is a Antenna cell"
+			c.soma {
+				define_shape()
+				//translate(gid, gid*2, gid*3)
+				//define_shape()
+			}
+			
+			//pop_section()
+			if (dFlag){
+				print gid, "ant   ", c
+				c.soma {
+					print secname()
+					for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				c.Bdend {
+					print secname()
+					for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				c.Adend1 {
+					print secname()
+					for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				c.Adend3 {
+					print secname()
+					for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+				if (gid==-1) {   // no longer used, was for testing on the fly
+					c.soma {
+						translate(2222,2222,2222)
+						define_shape()  //this is necessary to translate the connected sections
+						print secname(), "             ............NOW REDONE   "
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+					c.Bdend {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+					c.Adend1 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}
+					c.Adend3 {
+						print secname()
+						for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+					}  //adend3
+				} // if gid== -1
+			} // if dFlag
+		} //gidexists
+	} //antiter
+	if(debugFlag) print "finished creating Ant cells"
+} //function
+
+
+// =================================================================================================
+//
+// createBaskCells(cell param object)
+//
+// =================================================================================================
+proc createBaskCells() {local i, j, gid localobj c, r, fo
+	
+	r = new Random(pnm.pc.id+startsw())
+	
+	i      = 0
+	gid    = 0
+
+    for baskIter(&i, &gid) if (pnm.gid_exists(gid)) {
+		
+		c = new Bwb(gid, r.uniform($o1.iappSl, $o1.iappSh), 0, $o1.iappUnits)
+	
+		pnm.register_cell(gid, c )
+		if (debugFlag) print "Cell # ", gid, " is a basket cell"
+
+	 	//if (debugFlag) print "Adding Basket synapses"
+		addSyn(synParamSet, gid, "Bask")
+		addNoisySyn(noisySynParamSet,gid,"Bask") //CF: this function adds the noisesyn synapses
+		pnm.pc.gid2obj(gid).noisysynlist.o(0).gid = gid
+		
+
+
+		c.recordVoltage()
+		c.soma define_shape()
+	if(dFlag){
+		print gid, "bask   ", c
+		c.soma {
+			print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+			}
+		print "                   ..... now baskets redone "
+		c.soma {
+			translate(234, 345, 456)
+			define_shape()
+			print secname()
+			for i=0,n3d()-1 print i,x3d(i), y3d(i), z3d(i), diam3d(i)
+		}
+	}
+		
+    }
+	
+}
+
+
+
+
+// =================================================================================================
+//
+// createOLMCells(men, sd)
+//
+// =================================================================================================
+proc createOLMCells() {local i, j, gid localobj c, r, fo
+	r = new Random(pnm.pc.id+startsw())
+	i   = 0
+	gid = 0
+
+    for olmIter(&i, &gid) if (pnm.gid_exists(gid)) {
+		
+		//c = new Ok(gid,  r.uniform($o1.iappSl, $o1.iappSh), $o1.iappSsd, $o1.iappUnits)
+		c= new Ok(gid, 0,0,0)
+		pnm.register_cell(gid, c )
+		print "THE OLM CELLS ARE NOT POSITIONED!!!! THIS NEEDS TO BE FIXED!!!!!!!"
+		addSyn(synParamSet, gid, "OLM")
+		if (debugFlag) "creating OLM cells"
+    }
+}
+
+// =================================================================================================
+//
+// createNoiseStim()
+//
+// =================================================================================================
+proc createNoiseStim() {local i, j, gid localobj c 
+	i   = 0
+	gid = 0
+
+    for noiseIter(&i, &gid) if (pnm.gid_exists(gid)) {
+		
+		c = new NetStim()
+
+		pnm.register_cell(gid, c )
+// as of 5/26/08, the noise cells are 121-201 (to pyr) and 202-221 (to bask)
+//as of 6/08 this is no longer used, and the netstims are just NULLOBJECTs	
+    }
+}
+
+
+
+iterator ltr() {local i, cnt
+	for i = 0, $o2.count - 1 {
+		$o1 = $o2.object(i)
+		iterator_statement
+	}
+}
+
+
+
+strdef cmd
+// =================================================================================================
+//
+// activeSynapsesZero()
+//
+// =================================================================================================
+proc activeSynapsesZero() {localobj xo, co
+	
+	co = pnm.nclist
+	
+	//if ($1) print "synapse ACTIVATION at ", pnm.pc.id, co.count()
+	for ltr(xo, co) {
+		
+		//if ($1) print pnm.pc.id, xo.precell, xo.postcell, xo.syn, xo.weight
+		sprint(cmd, "%s", xo.postcell)
+		
+		if(strcmp(cmd,"NULLobject")!=0) xo.active(0)
+	}
+}
+objref synR
+// =================================================================================================
+//
+// randomPyrThenStim()   to have the pyr cells firing randomly and lightly up to certain time, 
+//      then start some input at that time
+// =================================================================================================
+
+
+proc randomPyrThenStim() {localobj xo, co, noiseR, noiseA, firstR
+// $1 start stim, $2 end stim, $3 min pyrthresh (uniform) prior to stim
+// $4 '0' DC current, '1' random inputs,  $5 current value/pyrthresh value
+
+	noiseR = new Random( startsw() )
+	synR = new Random( startsw() )
+	firstR = new Random( startsw() )
+	noiseA = new Random( startsw() )
+	synR.uniform(5,15)
+	co   = pnm.nclist
+	for ltr(xo, co) {
+		//print pnm.pc.id, xo.precell, xo.postcell, xo.syn, xo.weight, xo
+		sprint(cmd, "%s", xo.postcell)
+		if(strcmp(cmd, "NULLobject")!=0) {
+			sprint( cmd, "%s.active(1)", xo )
+			cvode.event(synR.repick(), cmd)    //makes NetCon[#] active at random times within 250, 750
+			//###but does that make an event?? I don't think so!  
+			// but if you remove this, there are no conns to the baskets...
+		}
+	}
+//add a noise event to every pyr cell  and every bask cell
+noiseR.uniform(0,100)
+noiseA.poisson(0.8)
+minthreshold=$3  //maximum pyrthresh on a uniform scale during first segment
+// no basketthreshold is implemented now
+basketthreshold=100
+noisestepper=.1  //how long the time intervals are in ms between each poisson noise iteration
+rng=0
+tStop=$2  //this is where the entire run ends
+tStart=$1  //this is where the stim starts, and where the noise ends
+randomflag=$4 //1 will go to random inputs, 0 will be DC input
+
+noiselist=new List()
+	noisetime=0
+
+// set up the Netcons for noise synapses on pyramidal cells
+for ii=0, nModules-1 {
+   for i=0,80 {
+	noisetime=0
+	gidnoise= i+ ii*N
+    if(pnm.gid_exists(gidnoise)) {
+		nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(2))
+	//print gidnoise, pnm.pc.gid2obj(gidnoise).synlist.o(2), nc.postcell, nc
+	nc.weight=.00001 * 53.407075   //cell area of pyr vs. the bask
+	noiselist.append(nc)
+	coweight=nc.weight
+	firstR.uniform(minthreshold,100)
+	threshold=firstR.repick()
+	//print threshold, gidnoise
+	while(noisetime<tStop){
+		if (noisetime>0 && noisetime<tStart) {   //first segment, just noise
+		  rng=noiseR.repick()
+		  if (rng>threshold) {
+			amp=noiseA.repick()
+			noiselist.o[i].weight = nc.weight * amp
+			//print noiselist.o[i], noisetime, noiselist.o[i].weight 
+			sprint(cmd, "%s.active(1)",noiselist.o[i])
+			cvode.event(noisetime,cmd)
+			//print i, noisetime
+			noiselist.o[i].event(noisetime)
+		    } //rng	
+		    nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		  } // if noisetime
+		if (noisetime>tStart && noisetime<tStop) {  //second segment
+			if (!randomflag) {
+				//pnm.pc.gid2obj(gidnoise).setIamp(0,0,$5,0,0)  //( iB, iS, iA1, iA2, iA3 [uA/cm2])
+				//that one goes constantly with no delay
+				//pnm.pc.gid2obj(gidnoise).iappA1.set($5,tStart)  //could work but doesn't have area info
+				pnm.pc.gid2obj(gidnoise).setAdend1Iamp($5,tStart) //40 saturates it, 20 is poorly coordinated
+					//30 has a couple of saturated ones, 35 a few more
+			} else {
+				rng=noiseR.repick()
+		  		if (rng>$5) {  //now all receive same input, as def by $5=pyrthresh
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					noiselist.o[i].event(noisetime)
+		    		} //rng	
+		    		nc.weight=coweight  
+			} //randomflag
+		} //if noisetime
+		
+
+		noisetime=noisetime+noisestepper
+		} //while noisetime
+    } //gidexists
+	} // for i
+//print noiselist.count
+//print noiselist.o[1].postcell, noiselist.o[1].weight, noiselist.o[1]
+   for i=81,100 {   //### switched from 81 - 100 to have passive cells
+	noisetime=0
+	gidnoise= i+ ii*N 
+    if(pnm.gid_exists(gidnoise)) {
+	nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(3))
+	//print gidnoise, pnm.pc.gid2obj(gidnoise).synlist.o(3), nc.precell, nc.postcell, nc
+	nc.weight=.00001  //could not compare with the synapses.par file because those are corrected by .001 or (1e-5 x area)
+	noiselist.append(nc)
+	coweight=nc.weight
+	while(noisetime<tStop){
+		if (noisetime>0 && noisetime<tStop) { 
+		  rng=noiseR.repick()
+		  if (rng>basketthreshold) {
+			amp=noiseA.repick()
+			
+			noiselist.o[i].weight = nc.weight * amp
+			print noiselist.o[i], noisetime, noiselist.o[i].weight 
+			sprint(cmd, "%s.active(1)",noiselist.o[i])
+			cvode.event(noisetime,cmd)
+			//print i, noisetime
+			noiselist.o[i].event(noisetime)
+
+			} //rng
+			
+			nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		  } //if noisetime
+		
+
+		noisetime=noisetime+noisestepper
+		} //while noisetime
+
+    } //gidexists
+	}	//for i
+
+
+} //ii
+//print noiselist.o[81].postcell, noiselist.o[81].weight, noiselist.o[81]
+		
+
+} // proc randomPyrThenStim
+
+
+// =================================================================================================
+//
+// activeSynapsesRandom()     This is the main function for producing noise, both in SR and CR simulations
+//
+// =================================================================================================
+
+
+proc activeSynapsesRandom() {localobj xo, co, noiseR, noiseA
+//$1 is tstop, $2 is pyr noise threshold, $3 is bask noise threshold
+	synR = new Random( startsw() )
+
+noiseR = new Random( startsw() )
+noiseA = new Random( startsw() )
+	synR.uniform(5,15) 	
+	co   = pnm.nclist
+//	if ($1) print "synapse ACTIVATION at ", pnm.pc.id, co.count()
+	for ltr(xo, co) {		
+		sprint(cmd, "%s", xo.postcell)		
+		if(strcmp(cmd, "NULLobject")!=0) {			
+			sprint( cmd, "%s.active(1)", xo )			
+			cvode.event(synR.repick(), cmd)    //makes NetCon[#] active at random times within 250, 750
+   	
+		}
+	}
+//add a noise event to every pyr cell  and every bask cell
+noiseR.uniform(0,100)
+noiseA.poisson(0.8)
+threshold=$2  //75 makes it start out at 100 hz
+basketthreshold=$3
+noisestepper=.1  //how long the time intervals are in ms between each poisson noise iteration
+rng=0
+tStop=$1
+noiselist=new List()
+	noisetime=0
+// set up the Netcons for noise synapses on pyramidal cells
+for ii=0, nModules-1 {
+   for i=0,80 {
+	noisetime=0   //will make a delay before noise starts
+	gidnoise= i+ ii*N
+    if(pnm.gid_exists(gidnoise)) {
+		nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(2))
+	nc.weight=.00001 * 53.407075   //cell area of pyr vs. the bask
+	noiselist.append(nc)
+//###this is a potential race problem--with multiple nodes, will the noiselist number still correspond to gid??
+	coweight=nc.weight
+
+	//start=noiseR.repick()
+	//start=start/20    // to make scattered delay starts, so they aren't all at same time exactly
+	start=0
+
+	while(noisetime<tStop){
+		if (noisetime>start && noisetime<tStop) {   //method is redundant, was used for variable input timing
+		  rng=noiseR.repick()
+		  if (rng>threshold) {
+			amp=noiseA.repick()
+			noiselist.o[i].weight = nc.weight * amp
+			//print noiselist.o[i], noisetime, noiselist.o[i].weight 
+			sprint(cmd, "%s.active(1)",noiselist.o[i])
+			cvode.event(noisetime,cmd)
+			//print i, noisetime
+			noiselist.o[i].event(noisetime)
+			} //rng			
+			nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		  } // if noisetime
+		noisetime=noisetime+noisestepper
+		} //while noisetime
+    } //gidexists
+	} // for i
+  for i=81,100 {   
+	noisetime=0
+	gidnoise= i+ ii*N
+    if(pnm.gid_exists(gidnoise)) {
+	nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(3))
+	nc.weight=.00001  //could not compare with the synapses.par file because those are corrected by .001 or (1e-5 x area)
+	noiselist.append(nc)
+	coweight=nc.weight
+	while(noisetime<tStop){
+		if (noisetime>0 && noisetime<tStop) { 
+		  rng=noiseR.repick()
+		  if (rng>basketthreshold) {
+			amp=noiseA.repick()			
+			noiselist.o[i].weight = nc.weight * amp
+			sprint(cmd, "%s.active(1)",noiselist.o[i])
+			cvode.event(noisetime,cmd)
+			//print i, noisetime
+			noiselist.o[i].event(noisetime)
+			} //rng			
+			nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		  } //if noisetime
+		noisetime=noisetime+noisestepper
+		} //while noisetime
+    } //gidexists
+  }	//for i
+} //ii
+
+		
+
+}  //proc
+
+// =================================================================================================
+//
+// shortspikes()     This is the main function for producing noise in pyr cell axons for brief periods
+//
+// =================================================================================================
+
+proc shortspikes() {localobj xo, co, noiseR, noiseA, noiseD, noiseD2, noisedelayv1, noisedelayv2  
+//$1 is tstop, $2 is pyr noise threshold, $3 is bask noise threshold,  $4 is spikedur in ms, $5 is spikefreq in Hz, $6 is normalmean, $7 is normalvar
+	synR = new Random( startsw() )
+	noiseR = new Random( startsw() )
+	noiseA = new Random( startsw() )
+	noiseD = new Random( startsw() )
+	noiseD2 = new Random( startsw() )
+	
+	normalmean=$6
+	normalvar=$7
+	
+	/* synR.uniform(5,15) 	
+	co   = pnm.nclist
+	for ltr(xo, co) {		
+		sprint(cmd, "%s", xo.postcell)		
+		if(strcmp(cmd, "NULLobject")!=0) {			
+			sprint( cmd, "%s.active(1)", xo )			
+			cvode.event(synR.repick(), cmd)    //makes NetCon[#] active at random times within 250, 750   	
+		}
+	} */
+	
+	/*co   = pnm.nclist
+	for ltr(xo, co) {		
+		sprint(cmd, "%s", xo.postcell)		
+		if(strcmp(cmd, "NULLobject")!=0) {			
+			sprint( cmd, "%s.active(1)", xo )			
+			cvode.event(0, cmd)    //makes NetCon[#] active at random times within 250, 750   	
+		}
+	} */
+	
+//add a noise event to every pyr cell  and every bask cell
+	noiseR.uniform(0,100)
+	noiseA.poisson(0.8)
+	noiseD.normal(normalmean, normalvar)  // mean and var delay -- will be added onto the start time of noise for each cell
+	noiseD2.normal(normalmean, normalvar)   //###change this to make the second slope longer	threshold=$2  //75 makes it start out at 100 hz	basketthreshold=$3		noisestepper=.1  //how long the time intervals are in ms between each poisson noise iteration	delayD=20 //how long to wait before the Driver noise turns on
+
+	lengthD=$4 //how long the Driver noise will last in each spike		quiescentthr=100 //baseline low noise level between spikes  - usually 97
+	basketquiescentthr = 100   //97.5 is good without coupling
+	variablebasketflag =0  //flag to determine whether baskets go more and less active like pyr cells, or always at basketthr if not
+	rng=0	tStop=$1	noiselist=new List()	noisetime=0
+	if ($5 == 0) {   //  can just set the spikefreq (how many spikes per second) to 1 to have it turn on for the full time after delayD
+		delayP = tStop
+		lengthD = tStop - delayD
+	} else {
+		delayP=1000/$5 //how long between start of spikes -- 1/spikefreq*1000
+	}
+
+if (tStop/delayP<1) delayP=tStop
+	// set up the Netcons for noise synapses on pyramidal cells
+
+noisedelayv1 = new Vector(tStop/delayP)
+noisedelayv2 = new Vector(tStop/delayP)
+
+
+
+
+
+counter=0
+for ii=0, nModules-1 {
+   for i=0, Npyr-1 {  ///###there are many other cells above 80 in this version, but only 0-80 get noise
+    noisetime=0   //will make a delay before noise starts
+    flop=0   //toggle to see if it's in the spike or outside the spike
+    gidnoise= i+ ii*N
+    if(pnm.gid_exists(gidnoise)) {
+	nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(2))
+	nc.weight=.00001 * 53.407075   //cell area of pyr vs. the bask
+	noiselist.append(nc)
+	coweight=nc.weight
+	start=delayD   //the time of the first spike, subsequent ones will be start+delayP*j
+    	
+	for j=1,tStop/delayP{
+		//noiseD.normal(normalmean, normalvar*j) // redefine here if you want it to change each spike
+		noisedelayv1.x[j-1]=noiseD.repick()
+		noisedelayv2.x[j-1]=noiseD2.repick()
+		//print noisedelayv1.x[j-1], noisedelayv2.x[j-1]
+	}
+	
+	//noiseD.play(playnoisedelay)  //can't get this to work
+	//print noisedelay  //, playnoisedelay
+	while(noisetime<tStop){ 	   if(gidnoise<81) {
+		for j=1,tStop/delayP {    //integer number of spikes in tStop
+			//noisedelay1= noiseD.repick()
+			//noisedelay2=noiseD.repick()
+			//print noisedelay1, noisedelay2
+			if ((noisetime>(delayD + (j-1)*delayP + noisedelayv1.x[j-1])) && (noisetime<(delayD + (j-1)*delayP + lengthD + noisedelayv2.x[j-1]))) {   
+				
+				rng=noiseR.repick()
+		  		if (rng>threshold) {
+					counter += 1
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					//print noiselist.o[i], noisetime, noiselist.o[i].weight 
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					//print i, noisetime, counter
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+				flop=1
+		  	}  // if noisetime
+			
+		} // j
+		if (flop == 0){  //interspike intervals
+				rng=noiseR.repick()
+		  		if (rng>quiescentthr) {   //separate threshold for quiescent times
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		}  // if flop
+	     } else {     //gidnoise<81   ### so all pyr cells above 80 are just at quiescentthr
+				
+
+  
+//these two things do the same thing, but the first does not require a new object.  Also, the first is *area*1e-5, the second is not
+//pnm.pc.gid2obj(152).setSomaIamp(.8, 50) 
+//pnm.pc.gid2obj(112).soma {
+//	iapps = new IApp()
+//	iapps.setValue(.05, 100) 
+// } 
+				
+
+		}  //else gidnoise <81
+		flop=0
+		noisetime=noisetime+noisestepper
+	} //while noisetime
+    
+      } //gidexists
+   } // for i
+
+//print "counter=     ", counter
+
+   for i=Npyr,Npyr+Nbask-1 {   //### Basket cells follow spike times if variablebasketflag==1    noisetime=0
+    flop=0    gidnoise= i+ ii*N
+    for j=1,tStop/delayP{
+		noisedelayv1.x[j-1]=noiseD.repick()
+		noisedelayv2.x[j-1]=noiseD.repick()
+    }    if(pnm.gid_exists(gidnoise)) {	nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(3))	nc.weight=.00001  //could not compare with the synapses.par file because those are corrected by .001 or (1e-5 x area)	noiselist.append(nc)	coweight=nc.weight	while(noisetime<tStop){
+	  if(variablebasketflag) {  //i.e. do you want baskets to get louder during spikes like pyr cells. if not, they are always loud
+		
+		for j=1,tStop/delayP {    //integer number of spikes in tStop
+			if ((noisetime>(delayD + (j-1)*delayP + noisedelayv1.x[j-1])) && (noisetime<(delayD + (j-1)*delayP + lengthD + noisedelayv2.x[j-1]))) {   
+				rng=noiseR.repick()
+		  		if (rng>basketthreshold) {
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					//print noiselist.o[i], noisetime, noiselist.o[i].weight 
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					//print i, noisetime, counter
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+				flop=1
+		  	}  // if noisetime
+			
+		} // j
+		if (flop == 0){  //interspike intervals
+				rng=noiseR.repick()
+		  		if (rng>basketquiescentthr) {   //separate threshold for quiescent times
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		} // if flop ==0 
+	     
+
+
+	  } else {           //if(variablebasketflag)   this below just makes all basket noise drive constant through		if (noisetime>0 && noisetime<tStop) { 		  rng=noiseR.repick()		  if (rng>basketthreshold) {			amp=noiseA.repick()			noiselist.o[i].weight = nc.weight * amp			sprint(cmd, "%s.active(1)",noiselist.o[i])			cvode.event(noisetime,cmd)			noiselist.o[i].event(noisetime)			} //rng						nc.weight=coweight  //reset weight to original value, else it retains it from this event		  } //if noisetime
+
+	  }  //else
+          	  noisetime=noisetime+noisestepper
+	  flop=0	} //while noisetime
+
+
+
+
+				
+	
+    } //gidexists   }	//for i
+
+
+
+   for i=Npyr+Nbask, Npyr+Nbask+Nant-1 {  // antenna cells
+    noisetime=0   //will make a delay before noise starts
+    flop=0   //toggle to see if it's in the spike or outside the spike
+    gidnoise= i+ ii*N
+    if(pnm.gid_exists(gidnoise)) {
+	nc=new NetCon(nil, pnm.pc.gid2obj(gidnoise).synlist.o(2))
+	nc.weight=.00001 * 53.407075   //cell area of pyr vs. the bask
+	noiselist.append(nc)
+	coweight=nc.weight
+	start=delayD   //the time of the first spike, subsequent ones will be start+delayP*j
+    	
+	for j=1,tStop/delayP{
+		//noiseD.normal(normalmean, normalvar*j) // redefine here if you want it to change each spike
+		noisedelayv1.x[j-1]=noiseD.repick()
+		noisedelayv2.x[j-1]=noiseD2.repick()
+		//print noisedelayv1.x[j-1], noisedelayv2.x[j-1]
+	}
+	threshold = 100 //NOT GOING TO HAVE BURSTING ANTENNA CELLS YET
+	while(noisetime<tStop){ 	
+		for j=1,tStop/delayP {    //integer number of spikes in tStop
+			//noisedelay1= noiseD.repick()
+			//noisedelay2=noiseD.repick()
+			//print noisedelay1, noisedelay2
+			if ((noisetime>(delayD + (j-1)*delayP + noisedelayv1.x[j-1])) && (noisetime<(delayD + (j-1)*delayP + lengthD + noisedelayv2.x[j-1]))) {   
+				
+				rng=noiseR.repick()
+		  		if (rng>threshold) {
+					counter += 1
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					//print noiselist.o[i], noisetime, noiselist.o[i].weight 
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					//print i, noisetime, counter
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+				flop=1
+		  	}  // if noisetime
+			
+		} // j
+		if (flop == 0){  //interspike intervals
+				rng=noiseR.repick()
+		  		if (rng>quiescentthr) {   //separate threshold for quiescent times
+					amp=noiseA.repick()
+					noiselist.o[i].weight = nc.weight * amp
+					sprint(cmd, "%s.active(1)",noiselist.o[i])
+					cvode.event(noisetime,cmd)
+					noiselist.o[i].event(noisetime)
+				} //rng			
+				nc.weight=coweight  //reset weight to original value, else it retains it from this event
+		}  // if flop
+	
+				
+
+  
+//these two things do the same thing, but the first does not require a new object.  Also, the first is *area*1e-5, the second is not
+//pnm.pc.gid2obj(152).setSomaIamp(.8, 50) 
+//pnm.pc.gid2obj(112).soma {
+//	iapps = new IApp()
+//	iapps.setValue(.05, 100) 
+// } 
+      //##### ADDED DEPOLARIZING DC CURRENT TO ANTENNA CELLS ########  1.3 is about the highest to go without causing APs
+
+
+//		if (gidnoise>Npyr+Nbask-1) pnm.pc.gid2obj(gidnoise).setSomaIamp(1.7, 0)   //amplitude, delay  This hits the ant cells with a DC pulse current
+		flop=0
+		noisetime=noisetime+noisestepper
+	} //while noisetime
+    
+      } //gidexists
+   } // for i
+  } //for ii
+print "finished shortspikes"
+totalVecSize()}   //proc shortspikes
+
+
+// =================================================================================================
+//
+// signalSynapse()
+//
+// =================================================================================================
+
+proc signalSynapse() {localobj xo, co
+//$1 is tstop, $2 is synapse type: 0 for AMPA; 1 for NMDA, $3 is freq in Hz, $4 is the gid getting the sig
+	co   = pnm.nclist
+tStop=$1
+syntype=$2
+freq=$3
+gidsig=$4
+if (freq==0) return
+	signaltime=0
+// set up the Netcons for signal synapses on pyramidal cells
+	if(pnm.gid_exists(gidsig)) {
+		if (syntype==0) {
+			nc=new NetCon(nil, pnm.pc.gid2obj(gidsig).synlist.o(3))
+		}else if (syntype!=0) {
+			print "ERROR: do not have any signal other than AMPA now"
+			return
+		}
+	nc.weight=.0001 * 53.407075   //cell area of pyr vs. the bask 
+//.0001 *53.4 is still subthreshold .0003 is just right for over threshold
+	signallist.prepend(nc)
+	while(signaltime<tStop){		
+			sprint(cmd, "%s.active(1)",signallist.o[0])
+			cvode.event(signaltime,cmd)
+			signallist.o[0].event(signaltime)
+			signaltime= signaltime + 1000/freq  //to make it ms
+		
+		} //while noisetime
+    } //gidexists
+
+}  //proc
+
+
+
+proc noiseStim() {
+print "noiseStim is not functional!"
+}
+
+// =================================================================================================
+//
+// addGap(g, gid)  this function is not working, it is done in a different fashion
+//
+// =================================================================================================
+
+proc addGap() {
+	print "addGap does not work! "
+	pnm.pc.gid2obj($2).addGapA1($1)
+	// all are set to the number listed in createPyrCells now
+
+}
+
+strdef modFileName
+// =================================================================================================
+//
+// addSyn(synParam, gid)
+//
+// =================================================================================================
+proc addSyn() { local i, tao1, tao2, Erev, synLocSec, synLoc, gid, ind, synID, r localobj synParamSet
+
+	synParamSet = $o1
+	gid         = $2
+	
+	for i=0, synParamSet.synSet.count()-1 {
+		if (!strcmp(synParamSet.synSet.object(i).postCell, $s3)) {		
+			tao1        = synParamSet.synSet.object(i).tao1
+			tao2        = synParamSet.synSet.object(i).tao2
+			Erev        = synParamSet.synSet.object(i).Erev
+			modFileName = synParamSet.synSet.object(i).modFileName
+			synLocSec   = synParamSet.synSet.object(i).synLocSec
+			synLoc      = synParamSet.synSet.object(i).synLoc
+			synID       = synParamSet.synSet.object(i).synID
+			r           = synParamSet.synSet.object(i).r
+//print synParamSet.synSet.object(i).preCell ," ", synID," ",synParamSet.synSet.object(i).postCell , i
+//first time through synID is all -2, then become 0,1,2,3. The precells::i are-- Bask::0 OLM::3 Noise::7 Pyr::9
+//
+//on the baskets, there are also 0,1,2,3 a bask 1, NMDA pyr 2, and OLM 4, and noise 8
+//and on OLM there are 0,1, bask and NMDA pyr
+//
+			
+			// Assign synID
+			if (synLocSec==0) {
+       			synParamSet.synSet.object(i).synID = pnm.pc.gid2obj(gid).addSynS( tao1, tao2, Erev, modFileName, synLoc)
+				}
+			
+			if (synLocSec==-1) {
+       			synParamSet.synSet.object(i).synID = pnm.pc.gid2obj(gid).addSynB( tao1, tao2, Erev, modFileName, synLoc)
+				}
+			
+			if (synLocSec==1) {
+       			synParamSet.synSet.object(i).synID = pnm.pc.gid2obj(gid).addSynA1( tao1, tao2, Erev, modFileName, synLoc)
+				}
+			
+			if (synLocSec==2) {
+       			synParamSet.synSet.object(i).synID = pnm.pc.gid2obj(gid).addSynA2( tao1, tao2, Erev, modFileName, synLoc)
+				}
+			
+			if (synLocSec==3) {
+       			synParamSet.synSet.object(i).synID = pnm.pc.gid2obj(gid).addSynA3( tao1, tao2, Erev, modFileName, synLoc)
+				}
+			
+			if(r>-1) pnm.pc.gid2obj(gid).synlist.object(synParamSet.synSet.object(i).synID).r = r
+			
+			
+			if(synParamSet.synSet.object(i).synID<0) print "ERROR!!!!!!!!*********************"
+		}
+	}
+}
+
+
+// ========== this is a copied and modified version of addSyn (above)
+//
+// addNoisySyn(synParam, gid)
+//
+// =================================================================================================
+proc addNoisySyn() { local i, start, tao1, tao2, Erev, synLocSec, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean localobj noisySynParamSet
+	
+	noisySynParamSet = $o1  //noisySynParamSet object, which just contains the general information from noisysynapses.par
+	gid         = $2   //gid
+	
+	for i=0, noisySynParamSet.noisySynSet.count()-1 {
+		if (!strcmp(noisySynParamSet.noisySynSet.object(i).postCell, $s3)) {
+			
+			modFileName		= noisySynParamSet.noisySynSet.object(i).modFileName
+			start			= noisySynParamSet.noisySynSet.object(i).start
+			tao1			= noisySynParamSet.noisySynSet.object(i).tao1
+			tao2			= noisySynParamSet.noisySynSet.object(i).tao2
+			Erev			= noisySynParamSet.noisySynSet.object(i).Erev
+			synLocSec		= noisySynParamSet.noisySynSet.object(i).synLocSec
+			synLoc			= noisySynParamSet.noisySynSet.object(i).synLoc
+			spikedur		= noisySynParamSet.noisySynSet.object(i).spikedur
+			spikefreq		= noisySynParamSet.noisySynSet.object(i).spikefreq
+			normalmean		= noisySynParamSet.noisySynSet.object(i).normalmean
+			normalstd		= noisySynParamSet.noisySynSet.object(i).normalstd
+			weight			= noisySynParamSet.noisySynSet.object(i).weight
+			poisson_mean	= noisySynParamSet.noisySynSet.object(i).poisson_mean
+
+			if (debugFlag) print gid, $s3, modFileName, spikedur, spikefreq, weight, start
+
+			if (synLocSec==0) {  //addSynS defined in pyrkop.tem
+       			pnm.pc.gid2obj(gid).addNoisySynS( modFileName, start, tao1, tao2, Erev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean)
+			}
+			
+			if (synLocSec==-1) {
+				pnm.pc.gid2obj(gid).addNoisySynB( modFileName, start, tao1, tao2, Erev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean)
+			}
+			
+			if (synLocSec==1) { 
+       			pnm.pc.gid2obj(gid).addNoisySynA1( modFileName, start, tao1, tao2, Erev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean)
+			}
+			
+			if (synLocSec==2) { 
+       			pnm.pc.gid2obj(gid).addNoisySynA2( modFileName, start, tao1, tao2, Erev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean)
+			}
+			
+			if (synLocSec==3) { 
+       			pnm.pc.gid2obj(gid).addNoisySynA3( modFileName, start, tao1, tao2, Erev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean)
+			}
+		
+		}
+	}
+}
+
+proc addAntennaDC() { local i, gid
+	i = 0
+	gid = 0
+	for antIter(&i,&gid) {
+		if (pnm.gid_exists(gid)) {
+			pnm.pc.gid2obj(gid).setSomaIamp($1, 0)   //amplitude, delay  This hits the ant cells with a DC pulse current
+		}
+	}
+}
+
+
+//this function sets the spike_tau value for the noisy synapses on pyramidal cells; this is meant to be called from hoc
+proc activatePyrSynapses() { local i, gid
+	i = 0
+	gid = 0
+	for pyrIter(&i,&gid) {
+		if (pnm.gid_exists(gid)) {	
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).spike_tau = $1
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).nospike_tau = $2
+		}
+	}
+}
+
+proc activateAntSynapses() { local i, gid
+	i = 0
+	gid = 0
+	for antIter(&i,&gid) {
+		if (pnm.gid_exists(gid)) {	
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).spike_tau = $1
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).nospike_tau = $2
+		}
+	}
+}
+
+
+//this function sets the spike_tau value for the noisy synapses on basket cells; this is meant to be called from hoc
+proc activateBaskSynapses() { local i, gid
+	i = 0
+	gid = 0
+	for baskIter(&i,&gid) {
+		if (pnm.gid_exists(gid)) {
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).spike_tau = $1
+			pnm.pc.gid2obj(gid).noisysynlist.o(0).nospike_tau = $2
+		}
+	}
+}
+
+
+
+// =================================================================================================
+//
+// recordVoltages()
+//
+// =================================================================================================
+proc recordVoltages() { local i, ii
+	
+	for i=0,Npyr-1 {
+		if (pnm.gid_exists(i)) {
+			pnm.pc.gid2obj(i).recordVoltage()			pnm.pc.gid2obj(i).fieldrec()  //creates extraRec[i] and TRec[i] for extracellular potentials
+					//has each section individually into vectors
+		}
+	}
+
+	for i=Npyr, Npyr+Nbask-1 {
+		if (pnm.gid_exists(i)) {
+			pnm.pc.gid2obj(i).fieldrec()
+		}
+	}    // adding basket contribution is negligible, but it works
+	//cvode.record(&vrec, electrodeRec, recordT)   // wasn't going to work easily
+
+	for i=Npyr+Nbask,Npyr+Nbask+Nant-1 {
+		if (pnm.gid_exists(i)) {
+			//pnm.pc.gid2obj(i).recordVoltage() //defined in bwb.tem, pyrkop.tem, and ok.tem
+			pnm.pc.gid2obj(i).fieldrec()  //creates extraRec[i] and TRec[i] for extracellular potentials
+					//has each section individually into vectors
+		}
+	}
+	
+//	pnm.pc.gid2obj(80).recordVoltage()  //basket cells
+//	pnm.pc.gid2obj(81).recordVoltage()  //basket cells
+//	pnm.pc.gid2obj(100).recordVoltage()  //to look at one of the ant cells
+//	pnm.pc.gid2obj(101).recordVoltage()
+
+			
+print "In recordVoltages()"
+totalVecSize()
+				
+}
+
+
+
+
+// =================================================================================================
+//
+// writeVoltages()              1/31/08 I am altering this section
+//
+// =================================================================================================
+proc writeVoltages() { local i, ii, j  localobj fo, ve, m, mm, dip, dip1, vrec, vrecactive, vrecantenna
+	
+print "In writeVoltages()"
+totalVecSize()
+	mm= new Matrix(pnm.pc.gid2obj(0).recordT[0].size(), 2)   //I added, not (if.existed)
+	ve = new Vector(pnm.pc.gid2obj(0).recordT[0].size())
+	dip = new Vector(pnm.pc.gid2obj(0).recordT[0].size())
+	dip1 = new Vector(pnm.pc.gid2obj(0).recordT[0].size())
+	vrec = new Vector(pnm.pc.gid2obj(0).recordT[0].size())   //was originally TRec[0], but then I removed the cvode.record for space
+	vrecactive = new Vector(pnm.pc.gid2obj(0).recordT[0].size())
+	vrecantenna = new Vector(pnm.pc.gid2obj(0).recordT[0].size())
+
+	mm.setcol(0, pnm.pc.gid2obj(0).recordT[0])
+	for i=0, Npyr-1{  
+		if (pnm.gid_exists(i)) {			
+				ve.add(pnm.pc.gid2obj(i).voltageRecS[0])	//prior to may 2011, this was actually 1, or the Bdend voltage
+		}
+	}     //adds voltages from all pyramidal cells together
+	
+	ve.mul(1/(Npyr-1))   //then averages them
+	mm.setcol(1, ve)   //then sets them into the matrix that will be saves as the "sum" file
+			
+	fo = new File()
+	/* if (numarg()==5)	{sprint(cmd, "data/sum_b%4.2f_p%5.3f_g%d_f%d.dat",$1,$2,$3,$4) //3.1lf for i nA
+	} else {sprint(cmd, "data/sum.dat")}
+	
+	if($5 < 1e-6) { //add the very beginning of the simulation, write over any old files and create a new one; after the beginning of the simulation, append to the newly-created file
+		fo.wopen(cmd)
+	} else { fo.aopen(cmd) } 
+	mm.fprint(0, fo, "%9.6lf ")
+	fo.close() */
+	
+	//print dipoleFlag   //also used for vrec
+
+	//generate intracellular voltage traces of individual cells
+	/* pnm.pc.gid2obj(0).writeVoltage(0,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(19).writeVoltage(19,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(30).writeVoltage(30,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(42).writeVoltage(42,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(44).writeVoltage(44,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(47).writeVoltage(47,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(55).writeVoltage(55,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(56).writeVoltage(56,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(65).writeVoltage(65,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(66).writeVoltage(66,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(68).writeVoltage(68,$1,$2,$3,$4,$5) */
+	
+	//VERY IMPORTANT: for this to work, must include line 'pnm.pc.gid2obj(####).recordVoltage()' in recordVoltages() above, except for regular pyramidal cells(this is necessary in order for recordT to exist)
+	/*pnm.pc.gid2obj(0).writeField(0,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(1).writeField(1,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(2).writeField(2,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(3).writeField(3,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(4).writeField(4,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(5).writeField(5,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(6).writeField(6,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(7).writeField(7,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(8).writeField(8,$1,$2,$3,$4,$5)
+	pnm.pc.gid2obj(9).writeField(9,$1,$2,$3,$4,$5) */
+	//pnm.pc.gid2obj(80).writeField(80,$1,$2,$3,$4,$5)
+	//pnm.pc.gid2obj(81).writeField(81,$1,$2,$3,$4,$5)
+	//pnm.pc.gid2obj(100).writeField(100,$1,$2,$3,$4,$5)
+	//pnm.pc.gid2obj(101).writeField(101,$1,$2,$3,$4,$5)
+
+	if (dipoleFlag) {
+		print "entered dipole"
+		for i=0, Npyr-1{
+			if(pnm.gid_exists(i)){
+				dip.add(pnm.pc.gid2obj(i).voltageRecS[1])  // Bdend
+				dip.sub(pnm.pc.gid2obj(i).voltageRecS[4])  // A3
+				dip1.add(pnm.pc.gid2obj(i).voltageRecS[1])  //Bdend
+				dip1.sub(pnm.pc.gid2obj(i).voltageRecS[2])  //A1        Dipoles are done to all cells once, including neighbor cells
+
+				for j=0,4 {
+					vrec.add(pnm.pc.gid2obj(i).extraRec[j])    //vrec uses all active pyr cells PLUS....
+					vrecactive.add(pnm.pc.gid2obj(i).extraRec[j])   //vrecactive is all active pyr cells (plus baskets)
+				}
+			}
+		}
+		for i=Npyr+Nbask,Npyr+Nbask+Nant-1 {         //the antenna cells
+			//for j=0,4 {
+				
+			//	weightedvec=pnm.pc.gid2obj(i).extraRec[j]
+			//	vrecantenna.add(weightedvec)  //in case you want to add multiple of the antenna signal
+			//	weightedvec.mul(1)
+			//	vrec.add(weightedvec)     //vrec adds all antenna cells, with a weight (now 1)
+			//}
+
+			if(pnm.gid_exists(i)){
+				//dip.add(pnm.pc.gid2obj(i).voltageRecS[1])  // Bdend
+				//dip.sub(pnm.pc.gid2obj(i).voltageRecS[4])  // A3
+				//dip1.add(pnm.pc.gid2obj(i).voltageRecS[1])  //Bdend
+				//dip1.sub(pnm.pc.gid2obj(i).voltageRecS[2])  //A1        
+
+				for j=0,4 {
+					vrec.add(pnm.pc.gid2obj(i).extraRec[j])    //vrec uses all antenna pyr cells PLUS....
+					vrecantenna.add(pnm.pc.gid2obj(i).extraRec[j])   //vrecantenna is all antenna pyr cells 
+				}
+			}
+		}
+		for i=Npyr,Npyr+Nbask-1 {
+			if(pnm.gid_exists(i)){
+				//print pnm.pc.gid2obj(i)
+				weightedvec=pnm.pc.gid2obj(i).extraRec
+				weightedvec.mul(1)
+				vrec.add(weightedvec)     //vrec adds all baskets
+				vrecactive.add(weightedvec)   //vrecactive also adds all baskets
+			}
+		}  //baskets are negligible, but they work
+		if (debugFlag) print vrec.size(), vrecactive.size(), vrecantenna.size(), dip.size(), dip1.size(), "after all cells"
+		/* sprint(cmd, "data/dipole_b%4.2f_p%5.3f_g%d_f%d.dat",$1,$2,$3,$4)  //dipole Bdend.v - A3.v
+		if($5 < 1e-6) { 
+			fo.wopen(cmd)
+		} else { fo.aopen(cmd) }
+		dip.mul(1/(Npyr-1))
+		mm.setcol(1, dip)
+		mm.fprint(0, fo, "%9.6lf ")
+		fo.close()
+
+		sprint(cmd, "data/shortdipole_b%4.2f_p%5.3f_g%d_f%d.dat",$1,$2,$3,$4)   //dipole soma.v - A1.v
+		if($5 < 1e-6) { 
+			fo.wopen(cmd)
+		} else { fo.aopen(cmd) }
+		dip1.mul(1/(Npyr-1))
+		mm.setcol(1, dip1)
+		mm.fprint(0, fo, "%9.6lf ")
+		fo.close() */
+
+		sprint(cmd, "data/extra_b%4.2f_p%5.3f_g%4.2f_f%d.dat",$1,$2,$3,$4)  //extracellular voltage
+		if($5 < 1e-6) { 
+			fo.wopen(cmd)
+		} else { fo.aopen(cmd) } 
+		mm.setcol(1, vrec)
+		mm.fprint(0, fo, "%9.6lf ")
+		fo.close()
+
+		sprint(cmd, "data/extraactive_b%4.2f_p%5.3f_g%4.2f_f%d.dat",$1,$2,$3,$4)  //extracellular voltage
+		if($5 < 1e-6) { 
+			fo.wopen(cmd)
+		} else { fo.aopen(cmd) } 
+		mm.setcol(1, vrecactive)
+		mm.fprint(0, fo, "%9.6lf ")
+		fo.close()
+
+		sprint(cmd, "data/extraantenna_b%4.2f_p%5.3f_g%4.2f_f%d.dat",$1,$2,$3,$4)  //extracellular voltage
+		if($5 < 1e-6) { 
+			fo.wopen(cmd)
+		} else { fo.aopen(cmd) }
+		mm.setcol(1, vrecantenna)
+		mm.fprint(0, fo, "%9.6lf ")
+		fo.close()
+	}
+	
+		//CF: I added the following lines so that the memory consumed by these recording vectors doesn't increase without bound throughout the run
+	
+	for i=0, Npyr-1{
+		if(pnm.gid_exists(i)){
+			for j=0,4 {
+				pnm.pc.gid2obj(i).voltageRecS[j].resize(0)
+				pnm.pc.gid2obj(i).extraRec[j].resize(0)
+			}
+		}
+	}
+	for i=Npyr+Nbask, Npyr+Nbask+Nant-1{
+		if(pnm.gid_exists(i)){
+			for j=0,4 {
+				pnm.pc.gid2obj(i).voltageRecS[j].resize(0) //don't need this bc. voltages of antenna cells are not being recorded
+				pnm.pc.gid2obj(i).extraRec[j].resize(0)
+			}
+		}
+	}
+		
+	for i=Npyr,Npyr+Nbask-1 {
+		if(pnm.gid_exists(i)){
+			pnm.pc.gid2obj(i).voltageRecS.resize(0)  //don't need this bc. voltages of basket cells are not being recorded
+			pnm.pc.gid2obj(i).extraRec.resize(0)
+		}
+	}
+	
+	//pnm.pc.gid2obj(0).recordT[0].resize(0)
+	for i=0,Npyr-1 {
+		pnm.pc.gid2obj(i).recordT[0].resize(0)
+	}
+	for i=Npyr+Nbask,Npyr+Nbask+Nant-1 {
+		pnm.pc.gid2obj(i).recordT[0].resize(0)
+	}
+	
+	for i=Npyr,Npyr+Nbask-1 {
+		pnm.pc.gid2obj(i).recordT.resize(0)
+	}
+}
+
+// =================================================================================================
+//
+// writesingleVoltage()              12/18/08 for when there is just a single pyr cell conn
+//
+// =================================================================================================
+proc writesingleVoltage() { localobj fo,  mm   
+
+//$1 is the basketthr $2 is pyrthresh $3 is sigfreq
+//I am assuming the cell we are recording is "GID= 1"
+
+fo= new File()
+	if (pnm.gid_exists(1)){
+		mm= new Matrix(pnm.pc.gid2obj(1).recordT[1].size(), 2)   
+		mm.setcol(0, pnm.pc.gid2obj(1).recordT[1])
+		mm.setcol(1, pnm.pc.gid2obj(1).voltageRecS[1])
+     	
+		sprint(cmd, "data/1_b%d_p%d_single_f%d.dat",$1,$2,$3) 
+		fo.wopen(cmd)
+		mm.fprint(0, fo, "%6.3lf ")
+		fo.close()
+
+	}
+	
+   	if (pnm.gid_exists(81)) {
+		mm= new Matrix(pnm.pc.gid2obj(81).recordT.size(), 2)   
+		mm.setcol(0, pnm.pc.gid2obj(81).recordT)
+		mm.setcol(1, pnm.pc.gid2obj(81).voltageRecS)
+     	
+		sprint(cmd, "data/81_b%d_p%d_single_f%d.dat",$1,$2,$3) 
+		fo.wopen(cmd)
+		mm.fprint(0, fo, "%6.3lf ")
+		fo.close()
+	}
+}
+
+//CF: add new function to write all the important parameters to a single file
+proc writeParameters() { localobj fo
+
+	fo = new File()
+	sprint(cmd, "data/parameters_b%4.2f_p%4.2f_g%d_f%d.dat",$1,$2,$3,$4)
+	fo.wopen(cmd)
+	
+	sprint(cmd, "bask_spike_tau=%9.6f", $1)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "pyr_spike_tau=%9.6f", $2)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "gapstyle=%d", $3)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "sigfreq=%d", $4)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "bask_spike_tau=%9.6f", $5)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "pyr_spike_tau=%9.6f", $6)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "antennaDC=%9.6f", $7)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "Tstop=%9.6f", $8)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "t_seg=%9.6f", $9)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "Npyr=%d", Npyr)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "Nbask=%d", Nbask)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "Nolm=%d", Nolm)
+	fo.printf("%s \n",cmd)
+	sprint(cmd, "Nant=%d", Nant)
+	fo.printf("%s \n",cmd)
+	
+	fo.close()
+} 
+
+
+proc recordnoise() { 
+	pnm.pc.gid2obj(1).recordnoise()
+}
+
+
+proc totalVecSize() {local i, s localobj vlist
+	vlist = new List("Vector")
+	s=0
+	max1=0
+	max2=0
+	max3=0
+	for i=1,vlist.count-1 {
+		s += vlist.o(i).size
+		//if (vlist.o(i).size > 500) print vlist.o(i).size, vlist.o(i)  // this shows that there are thousands of vectors recording every time point (i.e. 20001 long for a 500 ms recording)
+		if (vlist.o(i).size > max1) {
+			max2=max1   //this only takes the second biggest vector, not the 1000's that are tied for longest vector
+			max1 = vlist.o(i).size
+			max3=i
+		}
+		//print vlist.o(i)  // REALLY long
+	}
+print "# Vectors: ", vlist.count, " total size: ", s, " top 2: ", max1, max2 //, " top: ", vlist.o(max3)  // not useful, many that long
+}
+
+// =================================================================================================
+//
+// writenoise()              12/18/08 to determine noise input variance
+//
+// =================================================================================================
+proc writenoise() { localobj fo,  mm   
+
+//$1 is the pyrthresh 
+//I am assuming the cell we are recording is "GID= 1"
+
+	fo= new File()
+	if (pnm.gid_exists(1)){
+		mm= new Matrix(pnm.pc.gid2obj(1).recordT[1].size(), 2)   
+		mm.setcol(0, pnm.pc.gid2obj(1).recordT[1])
+		mm.setcol(1, pnm.pc.gid2obj(1).iRec)
+     	
+		sprint(cmd, "data/noise_b%d.dat",$1) 
+		fo.wopen(cmd)
+		mm.fprint(0, fo, "%6.3lf ")
+		fo.close()
+
+	}
+}
+
+
+// =================================================================================================
+//
+// setScatteredVoltages(low, high)
+//
+// =================================================================================================
+proc setScatteredVoltages() { local low, high
+
+  low  = $1
+  high = $2
+
+  i   = 0
+  gid = 0
+  
+  for pyrIter(&i,&gid)  if (pnm.gid_exists(gid)) pnm.pc.gid2obj(gid).setScatteredVoltages(low, high)  
+//for pyrIter(&i,&gid)  if (pnm.gid_exists(gid)) pnm.pc.gid2obj(gid).setScatteredVoltages(-56, -55)
+  for baskIter(&i,&gid) if (pnm.gid_exists(gid)) pnm.pc.gid2obj(gid).setScatteredVoltages(low, high)
+  for olmIter(&i,&gid)  if (pnm.gid_exists(gid)) pnm.pc.gid2obj(gid).setScatteredVoltages(low, high)
+
+
+  finitialize() 
+ 
+  finitialize() 
+//if (debugFlag) print "not stuck there"
+}
+
+
+
+
+
+// =================================================================================================
+//
+// makePyrgCaScattered( flag ) flag = {0,1}
+//
+// =================================================================================================
+proc makePyrgCaScattered() { local i, low, high, gid localobj rand
+
+	gCaScattered = $1	
+	gid = 0
+	i   = 0
+	rand = new Random(startsw())
+	if (gCaScattered==0) {	
+		low  = 10
+		high = 10		
+	}else{	
+		low  =  9
+		high = 11	
+	}	
+	rand.uniform(low, high)
+    for pyrIter(&i, &gid) if (pnm.gid_exists(i)) pnm.pc.gid2obj(i).den.gca_icapr = rand.repick()
+}
+
+
+
+strdef lineStr
+
+// =================================================================================================
+//
+// connectNetwork()
+//
+// =================================================================================================
+proc connectNetwork() { local sgid, i, ii, thr, Erev, g, cellArea, num, cnt, countSyn, preGID, postGID, noiseGID, synID, globalID, ind, gmax, gmaxUnits, delay, Npre, gapcon, rng, connthr localobj fo, randomconn
+		
+	preGID   = 0
+	postGID  = 0
+	noiseGID = 0
+	globalID = 0
+	cellArea = 0
+	cnt=0
+	rng=0  //will be used with randomconn.repick()
+	connthr=$1 //if rng<connthr, the connection will be made
+
+	randomconn = new Random ( startsw() )
+	randomconn.uniform(0,100)
+
+    Npyr  = synCellSet.cellSet.object(0).N   //I think this is not supposed to have +1 for 80 cells
+    Nbask = synCellSet.cellSet.object(1).N
+    Nolm  = synCellSet.cellSet.object(2).N
+    Nant  = synCellSet.cellSet.object(3).N
+   par_gaps=new List()    //makes a gap junction list
+
+   for ii=0, nModules-1 {
+	fo = new File()
+	fo.ropen("parameters/standard_conn.dat")
+	countSyn = 0
+	countGap = 0
+
+        //forcibly set all baskets to all pyr cells, with % connection of connthr (100 = all connections made) 
+	for i=Npyr, Npyr + Nbask-1 {
+		for j=0,Npyr-1 {	
+			preGID=i + ii* N
+			postGID=j + ii*N
+			globalID = 0	//do this bc. in synapses.par, the globalID for basket to pyr cells is 0
+		  if(pnm.gid_exists(preGID) || pnm.gid_exists(postGID)) {
+			gmax  = $2 //this allows for sweeping over various values of gmax for bask->pyr connections
+			delay = synParamSet.synSet.object(globalID).delay
+			synID = synParamSet.synSet.object(globalID).synID
+			gmaxUnits = synParamSet.synSet.object(globalID).gmaxUnits
+			Erev  = synParamSet.synSet.object(globalID).Erev
+			if ( pnm.gid_exists(postGID)) cellArea = pnm.pc.gid2cell(postGID).getTotalArea()
+			if(gmaxUnits==1) {
+				g = cellArea * gmax * 1e-5   //cellArea is 100 in bask, so g=gmax*.001							
+			}else{
+				g = gmax * 1e-3
+			}			
+			Npre = synParamSet.synSet.object(globalID).Npre
+			
+			if (Npre==-1) {   //CF: I'm pretty sure that if Npre==-1, then you assume all-to-all connectivity; in this case, you assume each pyr cell receives a synapse from every single basket cell
+				pN = -1
+				pNN = 0				
+				for k=0,  synCellSet.cellSet.count()-1 {			
+					if(strcmp(synCellSet.cellSet.object(k).name, synParamSet.synSet.object(globalID).preCell)==0)	{		
+						pN = synCellSet.cellSet.object(k).N
+						pNN = pNN + 1
+					}			
+				}				
+				if(pNN!=1 || pN==-1) print "ERROR pNN"
+				Npre = pN				
+			}			
+			g = g / Npre
+			rng=randomconn.repick()   //uniform 0-100
+			if (rng <= connthr) {
+					 //if(cnt%2)   { // ###this is to make only every other one go if placed before the bracket
+				ind   = pnm.nc_append(preGID, postGID, synID, g, delay) 
+				countSyn = countSyn + 1	
+				if (debugFlag) print "connecting these two cells: ",pnm.pc.gid2obj(preGID), pnm.pc.gid2obj(postGID), synID, g, delay			
+			}
+  			thr=pnm.pc.threshold(preGID,-20)  //can add (preGID, -10) to change it. At 0, lost many conns
+		  }//if pre/post GIDs exist
+		} //for j -- stepping through pyr cells
+
+   // now for ANT cells
+
+		for j=Npyr+Nbask,Npyr+Nbask+Nant-1 {	//now do the same thing for the ANT cells, still using the i from baskets
+			preGID=i + ii* N
+			postGID=j + ii*N
+			globalID = 0	//do this bc. in synapses.par, the globalID for basket to pyr cells is 0
+		   if(pnm.gid_exists(preGID) || pnm.gid_exists(postGID)) {
+			gmax  = $2 //this allows for sweeping over various values of gmax for bask->pyr connections
+			delay = synParamSet.synSet.object(globalID).delay
+			synID = synParamSet.synSet.object(globalID).synID
+			gmaxUnits = synParamSet.synSet.object(globalID).gmaxUnits
+			Erev  = synParamSet.synSet.object(globalID).Erev
+			if ( pnm.gid_exists(postGID)) cellArea = pnm.pc.gid2cell(postGID).getTotalArea()
+			if(gmaxUnits==1) {
+				g = cellArea * gmax * 1e-5   //cellArea is 100 in bask, so g=gmax*.001							
+			}else{
+				g = gmax * 1e-3
+			}			
+			Npre = synParamSet.synSet.object(globalID).Npre
+			if (Npre==-1) {   //CF: I'm pretty sure that if Npre==-1, then you assume all-to-all connectivity; in this case, you assume each pyr cell receives a synapse from every single basket cell
+				pN = -1
+				pNN = 0				
+				for k=0,  synCellSet.cellSet.count()-1 {			
+					if(strcmp(synCellSet.cellSet.object(k).name, synParamSet.synSet.object(globalID).preCell)==0)	{		
+						pN = synCellSet.cellSet.object(k).N
+						pNN = pNN + 1
+					}			
+				}				
+				if(pNN!=1 || pN==-1) print "ERROR pNN"
+				Npre = pN				
+			}			
+			g = g / Npre
+			rng=randomconn.repick()   //uniform 0-100
+			if (rng <= connthr) {
+					 //if(cnt%2)   { // ###this is to make only every other one go if placed before the bracket
+				ind   = pnm.nc_append(preGID, postGID, synID, g, delay) 
+				countSyn = countSyn + 1	
+				if (debugFlag) print "connecting these two cells: ",pnm.pc.gid2obj(preGID), pnm.pc.gid2obj(postGID), synID, g, delay			
+			}
+  			thr=pnm.pc.threshold(preGID,-20)  //can add (preGID, -10) to change it. At 0, lost many conns
+		  }//if pre/post GIDs exist
+		} //for j  --ant cells
+	} // for i  -- stepping through baskets
+
+
+
+
+
+	while( !fo.eof() ) {
+	
+		fo.gets( lineStr )
+		
+		cnt=cnt+1
+		num = sscanf( lineStr, "%d, %d, %d", &preGID, &postGID, &globalID)
+		preGID  = preGID  + ii * N
+		postGID = postGID + ii * N    // has GABA (globalID 0) from each bask to pyr once
+							// then has random NMDA pyr to bask (GlobalID 2, which is NOT synID)
+							// these are the corresponding 0 and 2 rows of the synapses.par file
+							// I have now made GlobalID 7 the noise->pyr AMPA,  and 8 noise-> bask
+							// 9 signal->pyr 10 pyr-pyr gaps, 11 bask-bask gaps
+		
+		if(num!=3) print "ERROR!!!!!!!!!!!!!!!!!"		
+		//gAMPAdend * taPyr * 1e-5
+
+		// Do only if source or target are on the node
+		if(pnm.gid_exists(preGID) || pnm.gid_exists(postGID)) {
+
+			gmax  = synParamSet.synSet.object(globalID).gmax
+			delay = synParamSet.synSet.object(globalID).delay
+			synID = synParamSet.synSet.object(globalID).synID
+					// these get set in AddSyn
+			gmaxUnits = synParamSet.synSet.object(globalID).gmaxUnits
+			Erev  = synParamSet.synSet.object(globalID).Erev
+			if ((manParamFlag==1) && (globalID==0) ) {
+					print "manual param flag ", preGID, postGID
+					//gmax=	gmax_basktopyr
+			}
+
+
+			if ( pnm.gid_exists(postGID)) cellArea = pnm.pc.gid2cell(postGID).getTotalArea()
+			
+				if(gmaxUnits==1) {
+				
+					// Convert gmax from mS/cm2 to uS
+					g = cellArea * gmax * 1e-5   //cellArea is 100 in bask, so g=gmax*.001
+									
+				}else{
+				
+					// Convert gmax from nS to uS
+					g = gmax * 1e-3
+				}
+			
+				// Normalize by the presynaptic number of cells
+				Npre = synParamSet.synSet.object(globalID).Npre
+				if (Npre==-1) {   //CF: I'm pretty sure that if Npre==-1, then you assume all-to-all connectivity; in this case, you assume each pyr cell receives a synapse from every single basket cell
+					pN = -1
+					pNN = 0				
+					for i=0,  synCellSet.cellSet.count()-1 {			
+						if(strcmp(synCellSet.cellSet.object(i).name, synParamSet.synSet.object(globalID).preCell)==0)	{				
+							pN = synCellSet.cellSet.object(i).N
+							pNN = pNN + 1
+						}			
+					}				
+					if(pNN!=1 || pN==-1) print "ERROR pNN"
+					Npre = pN				
+				}			
+			g = g / Npre
+					// the gmax is divided by 1000, then by the presyn cells (20 in case of bask-pyr GABA)
+
+
+			if (globalID<10) {
+//*******  Basket to Pyr connections *******
+				rng=randomconn.repick()   //uniform 0-100
+				if(globalID==0){    //this is for the basket-pyr AMPA synapses, which I can split into 2 
+				   if (rng <= connthr) {
+			            { //if(cnt%2)   { // ###this is to make only every other one go if placed before the bracket
+				        ind   = pnm.nc_append(preGID, postGID, synID, g, delay) 
+						countSyn = countSyn + 1	
+						print "this shouldn't be happening, it is already set above"						
+			            }
+				   }
+//********  all other regular synapses ****************
+                } else { ind   = pnm.nc_append(preGID, postGID, synID, g, delay)
+					countSyn = countSyn + 1
+					//print preGID, postGID, synID, g, delay 
+				}
+			
+			} else {	
+
+			// globalID 10 and 11 are gaps.  we've already read in the gmax of the gap, rest is garbage
+
+				if (globalID == 10) { //for baskbask gaps
+					
+					par_gap_create(preGID, 0 ,postGID, 0, gmax )   //the 2nd and 4th are locations
+					countGap = countGap+1					// 0 means soma, 1 means A1 for now
+				}  //globalID 10
+				if (globalID == 11) { //for pyrpyr gaps
+					if (manParamFlag==1) {
+						print "manual param flag ", preGID, postGID
+						//gmax=	gmax_pyrgap
+	
+					}  //manParamFlag
+
+					par_gap_create(preGID, 0 ,postGID, 0, gmax )   //the 2nd and 4th are locations
+					countGap = countGap+1					// 0 means soma, 1 means A1 for now
+				}  //globalID 11
+			} //else
+			
+			//countSyn = countSyn + 1  // no longer needed here, done within each instance, which also separated out the gaps
+			thr=pnm.pc.threshold(preGID,-20)  //can add (preGID, -10) to change it. At 0, lost many conns
+		}//if pre/post GIDs exist
+				 
+	} //while f.!eof
+    
+	fo.close()
+
+   } // ii
+
+
+//countSyn=countSyn-countGap //to correct for increments of Syn that were actually Gap above--no longer needed
+totalGaps=totalGaps+countGap
+ggap=.00005
+	pnm.pc.setup_transfer()
+	printf("%d synapses and %d gaps were set\n\n", countSyn, totalGaps)
+totalVecSize()
+	
+}
+
+
+
+// =================================================================================================
+//
+// connectNetworkInterModules()     THIS SECTION NOT UTILIZED IN THIS MODEL
+//
+// =================================================================================================
+proc connectNetworkInterModules() { local sgid, i, ii, iii, Erev, g, cellArea, num, countSyn, preGID, postGID, synID, globalID, ind, gmax, gmaxUnits, delay, Npre localobj fo
+	//countSyn = 0	//for some reason it's passing the N as the countSyn now 5/8 WS
+	preGID   = 0
+	postGID  = 0
+	globalID = 0
+	cellArea = 0
+	
+	for ii=0, nModules-1 {
+	 for iii=0,nModules-1 if (ii!=iii) {
+
+	  fo = new File()
+	  fo.ropen("parameters/conn.dat")
+	  countSyn = 0
+	
+	
+	   while( !fo.eof() ) {
+	
+		fo.gets( lineStr )
+		
+		num = sscanf( lineStr, "%d, %d, %d", &preGID, &postGID, &globalID)
+		
+		if(strcmp(synParamSet.synSet.object(globalID).preCell, "OLM")==0 && strcmp(synParamSet.synSet.object(globalID).postCell, "Pyr")==0 && preGID!=postGID) {
+		
+		 preGID  = preGID  + ii * N
+		 postGID = postGID + iii * N
+		 if(num!=3) print "ERROR!!!!!!!!!!!"		
+		 //gAMPAdend * taPyr * 1e-5
+
+		 // Do only if source or target are on the node
+		  if(pnm.gid_exists(preGID) || pnm.gid_exists(postGID)) {
+
+			gmax  = synParamSet.synSet.object(globalID).gmax
+			delay = synParamSet.synSet.object(globalID).delay
+			synID = synParamSet.synSet.object(globalID).synID
+			gmaxUnits = synParamSet.synSet.object(globalID).gmaxUnits
+			Erev  = synParamSet.synSet.object(globalID).Erev
+			
+			if ( pnm.gid_exists(postGID)) cellArea = pnm.pc.gid2cell(postGID).getTotalArea()
+			
+			if(gmaxUnits==1) {
+			
+				// Convert gmax from mS/cm2 to uS
+				g = cellArea * gmax * 1e-5
+				
+			}else{
+			
+				// Convert gmax from nS to uS
+				g = gmax * 1e-3
+		  }
+			
+			// Normalize by the presynaptic number of cells
+			
+			Npre = synParamSet.synSet.object(globalID).Npre
+			
+			if (Npre==-1) {
+
+				pN = -1
+				pNN = 0
+				
+				for i=0,  synCellSet.cellSet.count()-1 {
+				
+					if(strcmp(synCellSet.cellSet.object(i).name, synParamSet.synSet.object(globalID).preCell)==0) {
+						
+						pN = synCellSet.cellSet.object(i).N
+						pNN = pNN + 1
+					}			
+				}
+				
+				if(pNN!=1 || pN==-1) print "ERROR pNN"
+				Npre = pN
+				
+			}
+			
+			g = g / Npre
+			
+			ind   = pnm.nc_append(preGID, postGID, synID, g, delay)
+			
+			countSyn = countSyn + 1
+		}
+	}
+    }
+	fo.close()
+	} // ii
+
+	}// iii
+
+	pnm.pc.setup_transfer()
+	printf("%d Intermodule Connections were set\n\n", countSyn)
+
+}
+// =================================================================================================
+//
+// par_gap_create()
+//  taken from NEURON implementation of Traub's 2005 thalamocortical model
+// =================================================================================================
+
+gap_src_gid = 2
+func par_gap_create() {
+	gap_src_gid += 2
+
+	if (pnm.gid_exists($1)) { 
+		par_gap_create1($1, $2, gap_src_gid + 1, gap_src_gid, $5)
+	}
+	if (pnm.gid_exists($3)) {
+		par_gap_create1($3, $4, gap_src_gid, gap_src_gid + 1, $5)
+	}
+	return totalGaps + 1
+}
+proc par_gap_create1() {localobj c, g, gaploc
+	c = pnm.pc.gid2obj($1)
+	if ($2==0) {gaploc=c.getlocoS()}
+	if ($2==1) {gaploc=c.getlocoA1()}
+	gaploc.sec {      
+			g = new gGapPar(.5)
+			par_gaps.append(g)
+			//print pnm.pc.gid2obj($1), gaploc, $3, $4, par_gaps.count()
+			pnm.pc.target_var(&g.vgap, $3)
+			pnm.pc.source_var(&v(.5), $4)
+			g.g = $5		
+	}
+}
+
+
+
+endtemplate TGbignet2

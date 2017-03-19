@@ -1,0 +1,268 @@
+
+{load_file("nrngui.hoc") }         //I assume these libraries will load from the first /nrn path
+{load_file("stdrun.hoc")}
+{load_file("stdlib.hoc")} 
+{load_file("netparmpi.hoc")}
+{load_file("./externals.hoc")}
+{load_file("./templates/syn.tem")}
+{load_file("./templates/gap.tem")}
+{load_file("./templates/iapp.tem")}
+{load_file("./templates/pyrkop.tem")}
+{load_file("./templates/bwb.tem")}
+{load_file("./templates/ok.tem")}
+{load_file("./parameters/synapses.tem")}
+{load_file("./parameters/manycells.tem")} 
+{load_file("./templates/TGbignet2.tem")}
+
+
+if(doextra){
+	//print "doing EXTRACELLULAR stuff..........."
+	{load_file("./interpxyz.hoc")}	// only interpolates sections that have extracellular
+	{load_file("./setpointers.hoc")}  // has the function grindaway() in interpxyz.hoc to set up pointers
+	{load_file("./field.hoc")} //functions to calculate the extracellular voltage
+	{load_file("./calcrxc_a.hoc")}  //function to create the transfer resistance from each section
+}
+
+strdef cmd
+numiters=1
+objref pr, pc, nil, pyrspiketau_vec, baskspiketau_vec, baskconnvector, ipspg_vec, fih_progress, hines
+
+hinest1=startsw()
+hinest2=startsw()
+
+gapstyle=96  //split baskets right, many tests
+
+//19 lowered spikedur to 75
+//20 from here onward the _b will actually be basketnoise, rather than conn %.  I've switched conn to 100
+//g97 is to signify switching to this new method
+gapstyle=97
+gapstyle=0  //this is to signify running it with the newer version, with the noisesyn mods added
+
+//29 ungapped baskets, 2 rows of 10 inline gaps between pyr cells (.01 - high) 1-10 and 41-50
+antennaDC=1.3 //constant current added to antenna cells
+
+realrunFlag=1
+shortspikeFlag=1
+//celsius = 34   //for some reason this line gives an error for being out of range
+iteration=0
+{cvode.active(0)}
+
+//the following variables determine the structure of the ramp in noise
+/* ramp_on=100
+ramp_off=1000
+ramp_tau_start=0.4
+ramp_tau_end=0.03
+ramp_num_steps=100 */
+
+num_trials=1  //set number of different trials for each combination of pyrspike_tau, baskspike_tau, baskconnvector, and ipspgmax. There will be a different global seed for each simulation
+gind_start=0  //global index at which to start, in the parameter sweep
+{pyrspiketau_vec = new Vector()}
+{baskspiketau_vec = new Vector()}
+{baskconnvector = new Vector()}
+{ipspg_vec = new Vector()}
+{pyrspiketau_vec.append(0.10)} //mean time between arrival of noise events to pyramidal cells (so smaller number implies more intense noise)
+{baskspiketau_vec.append(1e9)}  //mean time between arrival of noise events to basket cells (so smaller number implies more intense noise)
+{baskconnvector.append(0)}    //controls what percentage of possible connections from basket cells to pyramidal cells are realized
+{ipspg_vec.append(5.5)}  //gmax for bask->pyr synapses, which goes into _f# in the filename
+//29 was old method
+//30 is adding in chris' new pieces one by one.  First is having shortspikes and noisesyn.  It worked
+//31 is having baskets 80-99 and ant above.  Working
+//32 recording from ant cells better (was same recording until now).  Working?
+//33 gapped baskets to see ant cell response-  gaps worked, but no real response. 
+//34  Will add bias current to ants, chose 1.5 to make it AP, not enough, made it 3 and now it works.
+//35 adding noisesyn to baskets.  worked
+//36 adding noisesyn to ant, and activateAntSynapses.. worked.  Makes normal HFO (high basket gaps, ant/bask/pyr all same noise (.33/ 3.333).  Also two chains of pyr gaps
+//37 trying to make abnormal HFO.  (.2 to all no real change, .1 and basketstart 1e9 looks good)
+//38 same as above without antenna's active (just antenna for baskets, not for spike).  manymoreconn has one additional gap between 88 and 90 to remove the
+//   "split".  600 ant cells.  baskets and pyr both active. 
+//39  3000 antenna, had to change the location style
+
+
+pc = new ParallelContext()
+pc.subworlds(1)
+
+func getTstop() { return Tstop }
+
+proc prinit() {    //had to change name because non-pr functions couldn't address pr
+
+	{pr.setScatteredVoltages(-85, -60)}
+	{pr.connectNetwork($1,$2)}  // took this out of init() in TGbignet2.tem
+	{pr.setSeed($3)} //set global index for Random123 
+	// { pr.activeSynapsesZero()} //CF: This inactivates all connections. I have no idea why you would want to do this.
+    finitialize() 
+  	finitialize() 
+}
+
+
+func onerun() {local id, num, ipspg, pyrthr, basketthr, pyr_spike_tau, bask_spike_tau, bask_perc, temp_time, temp_tau,ii localobj pc, fo, fo1, forast
+	id= hoc_ac_
+	pc = new ParallelContext()
+	{pr  = new TGbignet2()}
+	if(doextra) {
+		print "Doing EXTRACELLULAR stuff.....    ....."
+		setpointers()
+		setelec(-50, 0, 0)
+	}
+	//hines = new FInitializeHandler(2, "hinest1=startsw() hinest2=startsw() hines1()")
+	print "id_world number ", pc.id_world, "  id_bbs ", pc.id_bbs, "  id   ", id, " pc.id  ", pc.id 
+	//fih_progress = new FInitializeHandler(2, "cvode.event(100, \"progress()\" )" )  //took out if (pc.id == 0) 
+	//forall { for (x,0) print secname() }
+	{pr.recordVoltages()}
+	{pr.pnm.set_maxstep(0.01)}
+	{pr.pnm.want_all_spikes()}
+	runningTime = startsw()
+
+	stdinit()
+	bask_perc=$3  //percentage of inhibitory connections that are allowed to exist
+	ipspg=$4
+	g_ind=$5
+	prinit(bask_perc,ipspg,g_ind)   //added this extra function to allow for non-pr functions.  The input is passed to connectNetwork as the connthr
+	normmean=0    //can set this to $5 if useful in the future
+
+	pyr_spike_tau=$1
+	pyr_nospike_tau=1e9
+	bask_spike_tau=$2
+	bask_nospike_tau=1e9
+	{ pr.activatePyrSynapses(pyr_spike_tau,pyr_nospike_tau) }
+	{ pr.activateAntSynapses(pyr_spike_tau,pyr_nospike_tau) }
+	{ pr.activateBaskSynapses(bask_spike_tau,bask_nospike_tau) }
+
+	//we no longer need shortspikes, because noisesyn.mod provides stochastic stimulation; do need to pilfer 'addAntennaDC' from shortspikes, though
+	// if (shortspikeFlag) {
+	//	{pr.shortspikes(Tstop,pyrthr,basketthr, spikedur, spikefreq, normmean, normvar)} 
+		
+	/* } else {
+		//{pr.shortnonrandomspikes(Tstop,pyrthr,basketthr, spikedur, spikefreq)} } else {
+		//{pr.singlecellnonrandom(Tstop,pyrthr,basketthr, spikedur, spikefreq)} } else {
+		{pr.activeSynapsesRandom(Tstop, pyrthr, basketthr)}  
+	} */
+	
+	{ pr.addAntennaDC(antennaDC) } //CF: add DC current to all antenna cells, so that their resting membrane potential is above the -80mV chloride reversal potential; spike threshold is slightly above 1.3
+	
+	pc.post(id, pyrthr, ipspg, basketthr)	
+	forast = new File()
+	sprint(cmd, "data/spikes_b%4.2f_p%4.2f_g%4.2f_f%d.dat", bask_spike_tau, pyr_spike_tau, ipspg,bask_perc)
+	{ forast.wopen(cmd) }
+	
+	//now set up all the cvode events which will change the pyr_spike_tau values delivered to the pyramidal cells
+	/* for ii=1, ramp_num_steps {
+		temp_time=ramp_on + ii*(ramp_off-ramp_on)/ramp_num_steps  //calculate the time at which the iith noise change should occur
+		temp_tau=ramp_tau_start + ii*(ramp_tau_end-ramp_tau_start)/ramp_num_steps //calculate the value of tau for the iith  noise change
+		sprint(cmd,"pr.activatePyrSynapses(%5.3f,pyr_nospike_tau,normalstd)",temp_tau) //create the command to use 'activatePyrSynapses' to change the value of pyr_spike_tau
+		cvode.event(temp_time,cmd)
+	} */
+	
+	//advance through simulation in increments of t_seg (defined in externals.hoc); after every t_seg, write voltage data to files, and delete vectors containing this data,
+	//so that program does not run out of memory
+	t_curr = 0
+	while (t_curr < Tstop-dt){ //include the '-dt' to account for rounding error; otherwise, may get error in writeVoltages
+		print "Time = ",t_curr
+		if(t_curr + t_seg < Tstop) {
+			{ pr.pnm.pcontinue(t_curr+t_seg)}
+		} else {
+			{pr.pnm.pcontinue(Tstop)}
+		}
+		for i=0, pr.pnm.spikevec.size-1 {
+			forast.printf("%-10.6lf, %d\n", pr.pnm.spikevec.x[i], pr.pnm.idvec.x[i])
+		}
+		pr.pnm.spikevec.resize(0)
+		pr.pnm.idvec.resize(0) 
+		
+		pr.writeVoltages(bask_spike_tau, pyr_spike_tau, ipspg, bask_perc,t_curr)
+		
+		t_curr = t_curr + t_seg
+	}
+	{forast.close()}
+	
+	//basketthr=$2 //reset in case I used it above differently
+
+	//if (realrunFlag) {pr.writeVoltages(basketthr, pyrthr, gapstyle, sigfreq)} 
+	runningTime = startsw() - runningTime
+	iteration=iteration+1
+	print "Running Time: ", runningTime, "iteration: ",iteration
+	/* {pr.pnm.gatherspikes()}
+  	fo = new File()
+	fo1= new File()
+	sprint(cmd, "data/spikes.dat")
+	{fo1.wopen(cmd)}
+	sprint(cmd, "data/spikes_b%d_p%d_g%d_f%d.dat", basketthr, pyrthr, gapstyle,sigfreq)
+	if (realrunFlag) {fo.wopen(cmd)}
+	for i=0, pr.pnm.spikevec.size-1 {
+		if (realrunFlag) fo.printf("%-10.6lf, %d\n", pr.pnm.spikevec.x[i], pr.pnm.idvec.x[i])
+		fo1.printf("%-10.6lf, %d\n", pr.pnm.spikevec.x[i], pr.pnm.idvec.x[i])
+	}
+	if (realrunFlag) {fo.close()}
+	{fo1.close()} */
+	
+	//{pr.pnm.pc.done()}   //remove this one?
+
+ 	if (realrunFlag){
+		{fo=new File()}
+		{sprint(cmd, "spikes_b%4.2f_p%5.3f_g%4.2f_f%d.dat", bask_spike_tau, pyr_spike_tau,ipspg,bask_perc)}
+		{fo.aopen("data/spikelog.dat")}
+		{fo.printf("%s\n",cmd)}
+		{fo.close()}
+		{fo=new File()}
+		{sprint(cmd, "sum_b%4.2f_p%5.3f_g%4.2f_f%d.dat", bask_spike_tau, pyr_spike_tau,ipspg,bask_perc)}
+		{fo.aopen("data/sumlog.dat")}
+		{fo.printf("%s\n",cmd)}
+		{fo.close()}
+		pr.writeParameters(bask_spike_tau, pyr_spike_tau, gapstyle, ipspg, bask_nospike_tau, pyr_nospike_tau, antennaDC, Tstop, t_seg) //write parameters to file
+	}
+
+
+	{pc.gid_clear()}
+	{pr.pnm.pc.gid_clear()}
+	pr=nil    		
+	return id
+}
+
+proc progress() {
+	print t
+	cvode.event(t+100, "progress()" )
+}
+
+proc hines1() {
+        printf("pc.id_world= %d pc.id_bbs= %d t= %g dt= %g dreal=%g treal=%g\n", pc.id_world, pc.id_bbs, t, dt, startsw()-hinest2, startsw()-hinest1)
+        hinest2 = startsw()
+        cvode.event(t + 10, "hines1()")
+}
+
+{pc.runworker()}
+
+proc series() {local i, j, k, delay, tstop, id, spkcnt, tmax, gid, num
+
+	for i = 0, pyrspiketau_vec.size()-1 {
+		for j = 0, baskspiketau_vec.size()-1 {
+			for k = 0, baskconnvector.size()-1 {
+			  for l = 0, ipspg_vec.size()-1 {
+			  		for m = 0, num_trials-1 {
+						//generate a different global index for each simulation
+						g_index = gind_start+i*baskspiketau_vec.size()*baskconnvector.size()*ipspg_vec.size()*num_trials + j*baskconnvector.size()*ipspg_vec.size()*num_trials + k*ipspg_vec.size()*num_trials + l*num_trials + m
+						{pc.submit("onerun", pyrspiketau_vec.x[i], baskspiketau_vec.x[j], baskconnvector.x[k], ipspg_vec.x[l],g_index)}
+					}
+			    }
+			}
+		}
+	}
+	while ((id= pc.working())!=0) {
+		pc.take(id, &num)
+		//printf("num= %d", num)
+	}
+}
+
+series() //this line actually runs the simulation
+{pc.done()}
+quit() 
+
+//onerun(45,90,1, 400)  //pyrthr, baskthr, f, normvar
+
+
+
+
+
+
+
+
+
+

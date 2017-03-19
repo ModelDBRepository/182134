@@ -1,0 +1,253 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+//
+// This mod file is based on the paper:
+// Tort, A. B., Rotstein, H. G., Dugladze, T., et al. (2007). On the formation of gamma-coherent cell assemblies by oriens lacunosum-moleculare interneurons in the hippocampus. Proc Natl Acad Sci U S A,.
+//
+
+/*{load_file("syn.tem")}
+{load_file("gap.tem")}
+{load_file("iapp.tem")}*/
+
+begintemplate Ok
+
+external cvode
+
+// PUBLIC VARIABLES
+public x, y, z
+
+// PUBLIC OBJECTS
+public soma, spiketimes, idvec, synS, gapS, iappS, synlist
+
+// PUBLIC METHODS
+public position, getlocoS, connect2target, recordVoltage, is_art, addSynS, getTotalArea
+public setScatteredVoltages, writeVoltage
+
+create soma    
+
+objref iappS, synS, gapS, locS, voltageRecS, recordT
+objref spiketimes, idvec, nc, nil, synlist, inj
+
+strdef cmd
+
+// =================================================================================================
+//
+// init()
+//
+// =================================================================================================
+proc init() {
+    
+    createCell()
+        
+    access soma
+    
+    synlist = new List()
+    locS    = new SectionRef()
+    iappS   = new IApp()
+    synS    = new SynObj()
+    gapS    = new GapObj()
+    
+    spiketimes  = new Vector()
+    idvec       = new Vector()
+    voltageRecS = new Vector()
+    recordT     = new Vector()
+  
+    iappS.set_random_play($2, $3, $4, $1)
+    
+   	inj = new IClamp(0.5)
+	inj.del = 0
+	inj.dur = 1e9
+	inj.amp = -16 * area(0.5) * 1e-5  // uA/cm2 -> nA
+	
+}
+
+
+
+
+// =================================================================================================
+//
+// recordVoltage()
+//
+// =================================================================================================
+proc recordVoltage() {
+		
+		//print "Started RECORDING VOLTAGE at OLM"	
+		soma  cvode.record(&v(0.5), voltageRecS, recordT )
+}
+
+
+
+
+
+// =================================================================================================
+//
+// writeVoltage(gid)
+//
+// =================================================================================================
+proc writeVoltage() { local i localobj fo, m
+
+	//print "SIZE:", t, " ", recordT.size()
+
+	m = new Matrix(recordT.size(), 6)
+
+	m.setcol(0, recordT)
+	m.setcol(1, voltageRecS)
+
+	fo = new File()
+	
+	sprint(cmd,"data/%d.dat",$1)
+	{fo.wopen(cmd)}
+	
+	{m.fprint(0, fo, "%6.3lf ")}
+	
+	{fo.close()}
+}
+
+
+
+// =================================================================================================
+//
+// connect2target()
+//
+// =================================================================================================
+proc connect2target() { //$o1 target point process, $o2 returned NetCon
+  
+  soma $o2 = new NetCon(&v(0.5), $o1, 0 ,0, 0)
+  
+  if (numarg()==2) synS.addNetCon($o2)
+}
+
+
+
+
+// ========================================================================
+//
+// addSynS( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynS() {
+    
+    synlist.append(synS.synList.object( synS.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+
+// =================================================================================================
+//
+// createCell()
+//
+// =================================================================================================
+proc createCell() {
+
+    totalArea = 100 // um2
+
+    soma {
+        nseg  = 1
+        
+        cm    = 1.3  // uF/cm2
+        
+        diam  = sqrt(totalArea) // um
+        L     =  diam/PI  // um
+    
+    	insert pas
+    		e_pas = -70     // mV
+    		g_pas = 0.05e-3  // S/cm2 
+  
+	    insert NafOlmKop
+    	insert KdrOlmKop
+    	insert IhOlmKop
+    	gamx_IhOlmKop = 12 // 8 or 12 I do not know
+    	insert KaOlmKop	
+	//insert extracellular
+	//insert xtra	
+    }
+}
+
+
+
+
+// ========================================================================
+//
+// getTotalArea()
+//
+// ========================================================================
+func getTotalArea() {
+	
+	return totalArea
+}
+
+
+// =================================================================================================
+//
+// getlocoS()
+//
+// =================================================================================================
+obfunc getlocoS() { return locS }
+
+
+
+// =================================================================================================
+//
+// position()
+//
+// =================================================================================================
+proc position() { x=$1 y=$2 z=$3 }
+
+
+
+
+// =================================================================================================
+//
+// setScatteredVoltages(low, high)
+//
+// =================================================================================================
+proc setScatteredVoltages() { localobj rand
+
+  rand = new Random(startsw())
+  rand.uniform($1,$2)
+
+  forall v = rand.repick()
+}
+
+
+
+
+// =================================================================================================
+//
+// setIappR(mean [uA/cm2], std [uA/cm2], seed)
+//
+// =================================================================================================
+proc setIappR() {
+
+	locS mean_IappRrange = $1
+	locS sd_IappRrange   = $2
+	locS seed_IappRrange = $3
+}
+
+
+
+
+// =================================================================================================
+//
+// is_art()
+//
+// =================================================================================================
+func is_art() { return 0}
+
+
+
+
+endtemplate Ok

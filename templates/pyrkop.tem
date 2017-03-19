@@ -1,0 +1,971 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+//
+// This mod file is based on the paper:
+// Tort, A. B., Rotstein, H. G., Dugladze, T., et al. (2007). On the formation of gamma-coherent cell assemblies by oriens lacunosum-moleculare interneurons in the hippocampus. Proc Natl Acad Sci U S A,.
+//
+
+/*{load_file("syn.tem")}
+{load_file("gap.tem")}
+{load_file("iapp.tem")}
+{load_file("../externals.hoc")}*/
+
+begintemplate PYRkop
+
+external cvode, Tstop, doextra, vectorbuffersize
+
+
+// PUBLIC VARIABLES
+public soma, Bdend, Adend1, Adend2, Adend3, x, y, z
+
+// PUBLIC OBJECTS
+public iRec, iRecT, nc, spiketimes, idvec, synS, synB, synA1, synA2, synA3, synlist, noisysynlist, iappS, iappA1, recordT, voltageRecS, gaplist, gapA1, extraRec, TRec 
+
+public currentclamp
+
+// PUBLIC METHODS
+public getlocoS, getlocoB, getlocoA1, addSynS, addSynB, addSynA1, addSynA2, addSynA3, writeVoltage, writeDipole, writeField, is_art, addGapA1
+public addNoisySynS, addNoisySynB, addNoisySynA1, addNoisySynA2, addNoisySynA3
+public setIamp, setSomaIamp, setBdendIamp, setAdend1Iamp, setAdend2Iamp, setAdend3Iamp, getG, getTotalArea
+public getTotalArea, connect2target, recordVoltage, setScatteredVoltages, plotVoltage, recordcurrent, writecurrent, recordnoise, fieldrec
+
+
+create soma, Bdend, Adend1, Adend2, Adend3
+
+objref iappS, iappB, iappA1, iappA2, iappA3
+objref  synS,  synB,  synA1,  synA2,  synA3
+objref  gapS,  gapB,  gapA1,  gapA2,  gapA3
+objref  locS,  locB,  locA1,  locA2,  locA3
+objref nc, nil, synlist, gaplist, noisysynlist
+objref spiketimes, idvec, recordT[5], voltageRecS[5], iRec, iRecT
+objref currentclamp, extraRec[5]  //, TRec[5]
+
+
+strdef cmd
+
+
+// ========================================================================
+//
+// init()
+//
+// ========================================================================
+proc init() {
+    
+    setMorphology()
+    setConductances2()
+    insertIapp()
+    insertSynapses()
+    insertGapJunctions()   
+    initVectors()
+	//setIamp()
+
+    iappA3.set_random_play( $4, $5, $6, $1)  //mean, sd, isUnits, randomseedmultiplier
+    iappS.set_random_play(  $2, $3, $6, $1)
+}
+
+// =================================================================================================
+//
+// position()
+//
+// =================================================================================================
+proc position() { x=$1 y=$2 z=$3 }
+
+
+
+
+// =================================================================================================
+//
+// is_art()
+//
+// =================================================================================================
+func is_art() { return 0 }
+
+
+
+
+// =================================================================================================
+//
+// recordVoltage()
+//
+// =================================================================================================
+proc recordVoltage() {
+		
+		//print "Started RECORDING VOLTAGE at PYR"	
+				
+		soma   cvode.record(&v(0.5), voltageRecS[0], recordT[0] )
+		Bdend voltageRecS[1].record(&v(0.5))
+		Adend1 voltageRecS[2].record(&v(0.5))	
+		//Bdend  cvode.record(&v(0.5), voltageRecS[1], recordT[1] )		
+		//Adend1 cvode.record(&v(0.5), voltageRecS[2], recordT[2] )		
+		//Adend2 cvode.record(&v(0.5), voltageRecS[3], recordT[3] )				
+		Adend3 voltageRecS[4].record(&v(0.5))
+	  
+}
+
+proc fieldrec() { local sum
+	//sum =0
+	soma {
+		if (ismembrane("xtra")) {
+			//for (x,0) sum += er_xtra(x)
+			//for (x,0) cvode.record(&er_xtra(x), extraRec[0], TRec[0] )
+			//print secname(), "   in fieldrec()"
+			for (x,0) extraRec[0].record(&er_xtra(x))
+		}
+	}
+	Bdend {
+		if (ismembrane("xtra")) {
+			//for (x,0) sum += er_xtra(x)
+			//for (x,0) cvode.record(&er_xtra(x), extraRec[1], TRec[1] )
+			//print secname(), "   in fieldrec()"
+			for (x,0) extraRec[1].record(&er_xtra(x))
+		}
+	}
+	Adend1 {
+		if (ismembrane("xtra")) {
+			//for (x,0) sum += er_xtra(x)
+			//for (x,0) cvode.record(&er_xtra(x), extraRec[2], TRec[2] )
+			//print secname(), "   in fieldrec()"
+			for (x,0) extraRec[2].record(&er_xtra(x))
+		}
+	}
+	Adend2 {
+		if (ismembrane("xtra")) {
+			//for (x,0) sum += er_xtra(x)
+			//for (x,0) cvode.record(&er_xtra(x), extraRec[3], TRec[3] )
+			//print secname(), "   in fieldrec()"
+			for (x,0) extraRec[3].record(&er_xtra(x))
+		}
+	}
+	Adend3 {
+		if (ismembrane("xtra")) {
+			//for (x,0) sum += er_xtra(x)
+			//for (x,0) cvode.record(&er_xtra(x), extraRec[4], TRec[4] )
+			//print secname(), "   in fieldrec()"
+			for (x,0) extraRec[4].record(&er_xtra(x))
+		}
+	}
+	
+	//return sum
+}
+
+
+proc recordnoise() {
+		//Adend1 iRec.record(&synA1.synList.object(2).i)
+		//synA1.synList.object(2) cvode.record(&i,  iRec, iRecT)
+		//print synA1.synList.object(0), synA1.synList.object(1), synA1.synList.object(2)
+		// this run, Exp2Syn[7] is the one I want
+		iRec.record(&Exp2Syn[7].i)   //or .g
+}		
+
+proc recordcurrent() {
+		//$1 is total duration of clamp, $2 is amplitude, $3 is rs
+		soma currentclamp = new SEClamp(.5)
+		currentclamp.dur1=$1
+		currentclamp.amp1=$2
+		currentclamp.rs=$3
+		iRec.record(&currentclamp.i)  //will be the NEGATIVE of the actual incoming current   
+}		
+
+// =================================================================================================
+//
+// writeVoltage(gid)
+//
+// =================================================================================================
+proc writeVoltage() { local i localobj fo, m
+
+	//print "SIZE:", t, " ", recordT[0].size()
+
+	m = new Matrix(recordT[0].size(), 2)
+
+	m.setcol(0, recordT[0])
+	m.setcol(1, voltageRecS[0])
+	//for i=0,4 m.setcol(i+1, voltageRecS[i]) // - to do the axon and dends
+
+	fo = new File()
+	
+	sprint(cmd, "data/%d_voltage_b%4.2f_p%5.3f_g%d_f%d.dat", $1,$2,$3,$4,$5,$6)
+	
+	if($6 < 1e-6) {  //if t_curr is zero, then over-write any old file of the same name with a new file; otherwise, append to the old file
+		fo.wopen(cmd)
+	} else { fo.aopen(cmd) }
+	
+	m.fprint(0, fo, "%9.6lf ")
+	
+	fo.close()
+}
+
+// =================================================================================================
+//
+// writeDipole(gid)  this wasn't working for some reason
+//
+// =================================================================================================
+proc writeDipole() { local i localobj fo, m
+
+
+	m = new Matrix(recordT[0].size(), 6)
+
+	m.setcol(0, recordT[0])
+	m.setcol(1, voltageRecS[1])
+	m.setcol(2, voltageRecS[4])
+	m.setcol(3, voltageRecS[0])
+	m.setcol(4, voltageRecS[4] - voltageRecS[0])  //this column is the A3 - B dipole
+	
+
+	fo = new File()
+	
+	sprint(cmd, "data/%d.dat", $1)
+	
+	fo.wopen(cmd)
+	
+	m.fprint(0, fo, "%6.3lf ")
+	
+	fo.close()
+}
+
+proc writeField() { local i localobj fo, m
+
+	m = new Matrix(recordT[0].size(), 6)
+
+	m.setcol(0, recordT[0])
+	
+	for i=0,4 {
+		m.setcol(i+1, extraRec[i])
+	}
+
+	fo = new File()
+	
+	sprint(cmd, "data/%d_field_b%4.2f_p%5.3f_g%d_f%d.dat", $1,$2,$3,$4,$5,$6)
+
+	if($6 < 1e-6) {  //if t_curr is zero, then over-write any old file of the same name with a new file; otherwise, append to the old file
+		fo.wopen(cmd)
+	} else { fo.aopen(cmd) }
+	
+	m.fprint(0, fo, "%9.6lf ")
+	
+	fo.close()
+}
+
+
+objref gg  //make graph global so it shows all plotted graphs
+
+proc plotVoltage() { 	local i	//localobj gg
+	gg= new Graph()
+	voltageRecS[2].plot(gg)
+	//for i=0,4 {
+	//	voltageRecS[i].plot(gg)
+	//	}
+
+//gg.label($s1) doesn't work
+}
+
+
+// ========================================================================
+//
+// getTotalArea [um2]
+//
+// ========================================================================
+func getTotalArea() {
+
+    return totalArea
+}
+
+
+
+
+// ========================================================================
+//
+// setMorphology( pp )
+//
+// ========================================================================
+proc setMorphology() {
+
+
+    soma {
+
+        locS = new SectionRef()
+    
+        diam  =  20  // um
+        L     =  20  // um
+    }
+
+    Bdend {
+
+        locB = new SectionRef()
+    
+        diam  =  2   // um
+        L     =  200 // um
+    }
+    
+    Adend1 {
+
+        locA1 = new SectionRef()
+    
+        diam  =  2   // um
+        L     =  150 // um
+    }
+    
+    Adend2 {
+
+        locA2 = new SectionRef()
+    
+        diam  =  2   // um
+        L     =  150 // um
+    }
+    
+    Adend3 {
+
+        locA3 = new SectionRef()
+    
+        diam  =  2   // um
+        L     =  150 // um
+    }
+    
+    connect Bdend(1),  soma(0)
+    connect Adend1(0), soma(1)
+    connect Adend2(0), Adend1(1)
+    connect Adend3(0), Adend2(1)
+    
+    
+    totalArea = 0 // um2
+    forall totalArea=totalArea+area(0.5)
+// totalArea = 5340
+}
+
+// ========================================================================
+//
+// setConductances
+//
+// ========================================================================
+proc setConductances3() {
+	
+	// Currents
+	forall insert kacurrent
+	
+	Adend1 {
+		if (ismembrane("kacurrent"))g_kacurrent=0.072
+	}
+	
+	Adend2 {
+		if (ismembrane("kacurrent"))g_kacurrent=0
+		if (ismembrane("kacurrent"))gd_kacurrent=0.120
+	}
+	
+	Adend3 {
+		if (ismembrane("kacurrent"))g_kacurrent=0
+		if (ismembrane("kacurrent"))gd_kacurrent=0.200
+	}
+
+    forall {
+        
+        insert pas
+        e_pas = -70     // mV
+        g_pas = 1/28000  // S/cm2 
+  
+        insert NafPyrKop
+        insert KdrPyrKop  
+        // insert KaPyrKop  
+        insert IhPyrKop
+        cm = 1
+        Ra = 150
+    }
+    
+    Adend3 {
+    
+		cm    = cm * 2
+		g_pas = g_pas * 2
+    }
+    
+    
+    Bdend {
+    	if (ismembrane("IhPyrKop")) gh_IhPyrKop    =   0.1
+    	if (ismembrane("KaPyrKop"))gmax_KaPyrKop   =  48
+    	if (ismembrane("IhPyrKop"))v50_IhPyrKop    = -82
+    	if (ismembrane("NafPyrKop"))bk_NafPyrKop   =   1
+    	if (ismembrane("KaPyrKop"))ck_KaPyrKop     =   4
+    	if (ismembrane("KaPyrKop"))dk_KaPyrKop     =   1.5
+    	if (ismembrane("KaPyrKop"))ek_KaPyrKop     =  11
+    	if (ismembrane("KaPyrKop"))fk_KaPyrKop     =   0.825
+    }
+   
+    soma {
+    	if (ismembrane("IhPyrKop"))gh_IhPyrKop     =   0.1
+    	if (ismembrane("KaPyrKop"))gmax_KaPyrKop   =  48
+    	if (ismembrane("IhPyrKop"))v50_IhPyrKop    = -82
+    	if (ismembrane("NafPyrKop"))bk_NafPyrKop   =   0.8
+    	if (ismembrane("KaPyrKop"))ck_KaPyrKop     =   4
+    	if (ismembrane("KaPyrKop"))dk_KaPyrKop     =   1.5
+    	if (ismembrane("KaPyrKop"))ek_KaPyrKop     =  11
+    	if (ismembrane("KaPyrKop"))fk_KaPyrKop     =   0.825
+    }
+    
+    Adend1 {
+    	if (ismembrane("IhPyrKop"))gh_IhPyrKop     =   0.2
+    	if (ismembrane("KaPyrKop"))gmax_KaPyrKop   =  72
+    	if (ismembrane("IhPyrKop"))v50_IhPyrKop    = -82
+    	if (ismembrane("NafPyrKop"))bk_NafPyrKop   =   0.5
+    	if (ismembrane("KaPyrKop"))ck_KaPyrKop     =   4
+    	if (ismembrane("KaPyrKop"))dk_KaPyrKop     =   1.5
+    	if (ismembrane("KaPyrKop"))ek_KaPyrKop     =  11
+    	if (ismembrane("KaPyrKop"))fk_KaPyrKop     =   0.825
+    }
+    
+    Adend2 {
+    	if (ismembrane("IhPyrKop"))gh_IhPyrKop     =   0.4
+    	if (ismembrane("KaPyrKop"))gmax_KaPyrKop   = 120
+    	if (ismembrane("IhPyrKop"))v50_IhPyrKop    = -90
+    	if (ismembrane("NafPyrKop"))bk_NafPyrKop   =   0.5
+    	if (ismembrane("KaPyrKop"))ck_KaPyrKop     =   2
+    	if (ismembrane("KaPyrKop"))dk_KaPyrKop     =   1.8
+    	if (ismembrane("KaPyrKop"))ek_KaPyrKop     =  -1
+    	if (ismembrane("KaPyrKop"))fk_KaPyrKop     =   0.7
+    }
+    
+    Adend3 {
+    	if (ismembrane("IhPyrKop"))gh_IhPyrKop     =   0.7
+    	if (ismembrane("KaPyrKop"))gmax_KaPyrKop   = 200
+    	if (ismembrane("IhPyrKop"))v50_IhPyrKop    = -90
+    	if (ismembrane("NafPyrKop"))bk_NafPyrKop   =   0.5
+    	if (ismembrane("KaPyrKop"))ck_KaPyrKop     =   2
+    	if (ismembrane("KaPyrKop"))dk_KaPyrKop     =   1.8
+    	if (ismembrane("KaPyrKop"))ek_KaPyrKop     =  -1
+    	if (ismembrane("KaPyrKop"))fk_KaPyrKop     =   0.7
+    }
+}
+
+
+
+// ========================================================================
+//
+// setConductances
+//
+// ========================================================================
+proc setConductances() {
+	forall {Ra=150}
+
+// Currents
+
+forall {
+	insert pas
+	g_pas = 0.0000357*1
+	insert nacurrent
+	insert kacurrent
+	insert kdrcurrent
+	insert hcurrent
+
+}
+
+// soma{insert Edrive} because of ghost cells
+
+
+Adend1 {
+	ki_nacurrent = 0.5
+	g_kacurrent=0.072
+
+	v50_hcurrent = -82
+	g_hcurrent = 0.0002
+}
+
+Adend2 {
+	ki_nacurrent = 0.5
+
+	g_kacurrent=0
+	gd_kacurrent=0.120
+
+	v50_hcurrent = -90
+	g_hcurrent = 0.0004
+}
+
+Adend3 {
+	cm = 2
+	g_pas = 0.0000714
+	ki_nacurrent = 0.5
+
+	g_kacurrent=0
+	gd_kacurrent=0.200
+
+	v50_hcurrent = -90
+	g_hcurrent = 0.0007
+}
+
+Bdend {ki_nacurrent = 1}
+
+}
+
+
+
+
+// ========================================================================
+//
+// setConductances      THIS IS THE ONE THAT"S USED
+//
+// ========================================================================
+proc setConductances2() {
+
+    forall {
+        
+        insert pas
+        e_pas = -70     // mV
+        g_pas = 1/28000  // S/cm2 
+	if (doextra) {
+		insert extracellular	
+		insert xtra
+	}
+	//Both of the above must be commented out if "doextra" is not true--which calls "setpointers()"
+  	//print "extracellular =" , xg[0], xg[1], xc[0], xc[1], xraxial[0], xraxial[1], e_extracellular
+        
+	insert NafPyrKop
+        insert KdrPyrKop  
+        insert KaPyrKop  
+        insert IhPyrKop
+        cm = 1
+        Ra = 150
+    }
+    
+    Adend3 {
+    
+		cm    = cm * 2
+		g_pas = g_pas * 2
+    }
+    
+    
+    Bdend {
+    	gh_IhPyrKop     =   0.1
+    	gmax_KaPyrKop   =  48
+    	v50_IhPyrKop    = -82
+    	bk_NafPyrKop    =   1
+    	ck_KaPyrKop     =   4
+    	dk_KaPyrKop     =   1.5
+    	ek_KaPyrKop     =  11
+    	fk_KaPyrKop     =   0.825
+    }
+   
+    soma {
+    	gh_IhPyrKop     =   0.1
+    	gmax_KaPyrKop   =  48
+    	v50_IhPyrKop    = -82
+    	bk_NafPyrKop    =   0.8
+    	ck_KaPyrKop     =   4
+    	dk_KaPyrKop     =   1.5
+    	ek_KaPyrKop     =  11
+    	fk_KaPyrKop     =   0.825
+    }
+    
+    Adend1 {
+    	gh_IhPyrKop     =   0.2
+    	gmax_KaPyrKop   =  72
+    	v50_IhPyrKop    = -82
+    	bk_NafPyrKop    =   0.5
+    	ck_KaPyrKop     =   4
+    	dk_KaPyrKop     =   1.5
+    	ek_KaPyrKop     =  11
+    	fk_KaPyrKop     =   0.825
+    }
+    
+    Adend2 {
+    	gh_IhPyrKop     =   0.4
+    	gmax_KaPyrKop   = 120
+    	v50_IhPyrKop    = -90
+    	bk_NafPyrKop    =   0.5
+    	ck_KaPyrKop     =   2
+    	dk_KaPyrKop     =   1.8
+    	ek_KaPyrKop     =  -1
+    	fk_KaPyrKop     =   0.7
+    }
+    
+    Adend3 {
+    	gh_IhPyrKop     =   0.7
+    	gmax_KaPyrKop   = 200
+    	v50_IhPyrKop    = -90
+    	bk_NafPyrKop    =   0.5
+    	ck_KaPyrKop     =   2
+    	dk_KaPyrKop     =   1.8
+    	ek_KaPyrKop     =  -1
+    	fk_KaPyrKop     =   0.7
+    }
+
+forall gmax_KaPyrKop = gmax_KaPyrKop * 0.7
+}
+
+
+
+
+// ========================================================================
+//
+// insertIapp
+//
+// ========================================================================
+proc insertIapp() {
+
+    soma   iappS  = new IApp()
+    Bdend  iappB  = new IApp()
+    Adend1 iappA1 = new IApp()
+    Adend2 iappA2 = new IApp()
+    Adend3 iappA3 = new IApp()
+}
+
+
+
+
+// ========================================================================
+//
+// setBdendIamp( i [uA/cm2] )
+//
+// ========================================================================
+proc setBdendIamp() {
+
+    iappB.setValue($1*getTotalArea()*1e-5)    
+}
+
+
+
+
+// ========================================================================
+//
+// setSomaIamp( i [uA/cm2] )
+//
+// ========================================================================
+proc setSomaIamp() {
+  if(numarg()==1 || numarg()==2) {
+    if (numarg()==1)   iappS.setValue($1*getTotalArea()*1e-5)    
+    if (numarg()==2)   iappS.setValue($1*getTotalArea()*1e-5, $2)  //$2 is delay 
+  } else {
+	print "WRONG number of Iapp args"
+  }
+}
+
+
+
+
+// ========================================================================
+//
+// setAdend1Iamp( i [uA/cm2] )
+//
+// ========================================================================
+proc setAdend1Iamp() {
+
+    iappA1.setValue($1*getTotalArea()*1e-5,$2)    
+}
+
+
+
+// ========================================================================
+//
+// setAdend2Iamp( i [uA/cm2] )
+//
+// ========================================================================
+proc setAdend2Iamp() {
+
+    iappA2.setValue($1*getTotalArea()*1e-5)    
+}
+
+
+
+// ========================================================================
+//
+// setAdend3Iamp( i [uA/cm2] )
+//
+// ========================================================================
+proc setAdend3Iamp() {
+
+    iappA3.setValue($1*getTotalArea()*1e-5)    
+}
+
+
+
+// ========================================================================
+//
+// setIamp( iB, iS, iA1, iA2, iA3 [uA/cm2])
+//
+// ========================================================================
+proc setIamp() {
+
+	setBdendIamp($1)
+	setSomaIamp($2)
+	setAdend1Iamp($3)
+	setAdend2Iamp($4)
+	setAdend3Iamp($5)    
+}
+
+
+
+// ========================================================================
+//
+// insertSynapses
+//
+// ========================================================================
+proc insertSynapses() {
+
+    soma   synS  = new SynObj()
+    Bdend  synB  = new SynObj()
+    Adend1 synA1 = new SynObj()
+    Adend2 synA2 = new SynObj()
+    Adend3 synA3 = new SynObj()
+    
+    synlist    = new List()
+  	noisysynlist = new List()
+}
+
+//====================================================
+//noisy synapses
+//=====================================================
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the soma
+proc addNoisySynS() {
+	noisysynlist.append(synS.noisySynList.object( synS.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the B1 dendrite
+proc addNoisySynB() {
+	noisysynlist.append(synB.noisySynList.object( synB.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the A1 dendrite
+proc addNoisySynA1() {
+	noisysynlist.append(synA1.noisySynList.object( synA1.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the A2 dendrite
+proc addNoisySynA2() {
+	noisysynlist.append(synA2.noisySynList.object( synA2.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the A3 dendrite
+proc addNoisySynA3() {
+	noisysynlist.append(synA3.noisySynList.object( synA3.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+
+
+// ========================================================================
+//
+// addSynS( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynS() {
+    
+    synlist.append(synS.synList.object( synS.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+
+// ========================================================================
+//
+// addSynB( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynB() {
+    
+    synlist.append(synB.synList.object( synB.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+
+// ========================================================================
+//
+// addSynA1( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynA1() {
+    
+    synlist.append(synA1.synList.object( synA1.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+
+// ========================================================================
+//
+// addSynA2( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynA2() {
+    
+    synlist.append(synA2.synList.object( synA2.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+
+// ========================================================================
+//
+// addSynA3( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynA3() {
+    
+    synlist.append(synA3.synList.object( synA3.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+
+// ========================================================================
+//
+// insertGapJunctions
+//
+// ========================================================================
+proc insertGapJunctions() {
+
+    soma   gapS  = new GapObj()
+    Bdend  gapB  = new GapObj()
+    Adend1 gapA1 = new GapObj()
+    Adend2 gapA2 = new GapObj()
+    Adend3 gapA3 = new GapObj()
+	gaplist = new List()
+}
+
+
+
+// ========================================================================
+//
+// addGapA1( g )
+//
+// ========================================================================
+func addGapA1() {
+
+     gapA1.add( $1 )  
+      gaplist.append(gapA1.gapList.object(0) )  // gapList is prepended, so new one is 0
+	return gaplist.count()-1
+}
+
+
+
+
+// ========================================================================
+//
+// getTotalArea()
+//
+// ========================================================================
+func getTotalArea() {
+	
+	return totalArea
+}
+
+
+
+
+// ========================================================================
+//
+// connect2target( $o1 target point process, $o2 returned NetCon )
+//
+// ========================================================================
+proc connect2target() { //$o1 target point process, $o2 returned NetCon
+  
+  soma $o2 = new NetCon(&v(0.5), $o1, 0 ,0, 0)
+  //return synD.addNetCon($o2)
+}
+
+
+
+
+// ========================================================================
+//
+// initVectors
+//
+// ========================================================================
+proc initVectors() {
+
+    spiketimes  = new Vector()
+    idvec       = new Vector()
+	iRec = new Vector()
+	iRecT = new Vector()   
+	recordT[0]     = new Vector(vectorbuffersize)   //was originally recordT[i] in the for loop
+	recordT[0].buffer_size(vectorbuffersize)  //do this so if it's resized to 0 it maintains the buffer
+    for i=0, 4 {
+    	extraRec[i] = new Vector(vectorbuffersize)
+	//TRec[i] = new Vector(vectorbuffersize)
+    	voltageRecS[i] = new Vector(vectorbuffersize)
+   //set to 40001 for 1000 ms sim, they get reset later to lower values if lower
+
+	extraRec[i].buffer_size(vectorbuffersize)
+	voltageRecS[i].buffer_size(vectorbuffersize)
+	}
+}
+
+
+
+
+// =================================================================================================
+//
+// setScatteredVoltages(low, high)
+//
+// =================================================================================================
+proc setScatteredVoltages() { localobj rand
+
+  rand = new Random(startsw())
+  rand.uniform($1, $2)
+
+  forall v = rand.repick()
+}
+
+
+
+
+// ========================================================================
+//
+// getlocoS
+//
+// ========================================================================
+obfunc getlocoS() { return locS }
+
+
+
+
+// ========================================================================
+//
+// getlocoB
+//
+// ========================================================================
+obfunc getlocoB() { return locB }
+
+
+
+
+// ========================================================================
+//
+// getlocoA1
+//
+// ========================================================================
+obfunc getlocoA1() { return locA1 }
+
+
+
+
+// ========================================================================
+//
+// getlocoA2
+//
+// ========================================================================
+obfunc getlocoA2() { return locA2 }
+
+
+
+
+// ========================================================================
+//
+// getlocoA3
+//
+// ========================================================================
+obfunc getlocoA3() { return locA3 }
+
+
+
+
+endtemplate PYRkop

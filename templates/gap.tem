@@ -1,0 +1,147 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+begintemplate GapObj
+
+public add, get, getloc, addVar, remove_all, addPerArea, gapList
+
+objref  gapList, loc
+        
+
+
+
+// =================================================================================================
+//
+// init()
+//
+// =================================================================================================
+proc init() {
+    gapList = new List()
+    loc = new SectionRef()
+}
+
+
+
+
+// =================================================================================================
+//
+// add(sec ref preSynCell, ggap (nS))
+//
+// =================================================================================================
+proc add() {
+    
+    if (numarg()==1) {
+    
+        loc.sec gapList.prepend(new HalfGap(0.5))
+        
+        gapList.object(0).g = $1
+        //$o1.sec setpointer gapList.object(0).vgap, v(0.5)
+        
+    }else{
+    
+        print "USAGE: add(sec ref preSynCell, ggap (nS))"
+    
+    }
+}
+
+
+
+
+// =================================================================================================
+//
+// addPerArea(sec ref preSynCell, ggap (mS/cm2))
+//
+// =================================================================================================
+proc addPerArea() {
+    
+    if (numarg()==2) {
+    
+        loc.sec gapList.prepend(new HalfGap(0.5))
+        
+        loc.sec gapList.object(0).ggap = $2 * area(0.5) * 1e-2 // -> nS 1e-8 * 1e6
+        $o1.sec setpointer gapList.object(0).vgap, v(0.5)
+        
+    }else{
+    
+        print "USAGE: add(sec ref preSynCell, ggap (mS/cm2))"
+    
+    }
+}
+
+
+
+// =================================================================================================
+//
+// remove_all()
+//
+// ================================================================================================
+proc remove_all() {
+
+    gapList.remove_all()
+}
+
+
+
+
+// =================================================================================================
+//
+// addVar()
+//
+// ================================================================================================
+proc addVar() {
+    
+    if (numarg()==2) {
+    
+        loc.sec gapList.prepend(new HalfGap(0.5))
+        
+        gapList.object(0).ggap = $2
+        loc.sec setpointer gapList.object(0).vgap, $&1
+        
+    }else{
+    
+        print "USAGE: addGap(&var, ggap (nS))"
+    
+    }
+}
+
+
+
+
+// =================================================================================================
+//
+// getloc()
+//
+// ================================================================================================
+proc getloc() {
+    
+    loc.sec print secname() 
+}
+
+
+
+
+// =================================================================================================
+//
+// get()
+//
+// ================================================================================================
+proc get() {
+
+    for i=0, gapList.count()-1 {
+        loc.sec printf("%d, %s, vpre= %s, ggap= %g uS, loc= %s\n", i, gapList.object(i), gapList.object(i).vpre, gapList.object(i).ggap, secname())
+    }
+}
+
+endtemplate GapObj

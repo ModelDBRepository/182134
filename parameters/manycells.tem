@@ -1,0 +1,84 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+// Definition of the cellular properties in the network
+begintemplate CellParam
+
+public name, N, iappSl, iappSh, iappSsd, iappAl, iappAh, iappAsd, iappUnits 
+
+strdef name
+
+proc init() {
+	
+	name      = $s1// Name of the cell, e.g. Pyr
+	N         = $2 // Number of the cells in the network
+	iappSl    = $3 // The lowest value for the somatic injected curreent (over the population)
+	iappSh    = $4 // The highest value for the somatic injected curreent (over the population)
+	iappSsd   = $5 // Standard Deviation of the somatic injected curreent (for one cell)
+	iappAl    = $6 // apical
+	iappAh    = $7 // apical
+	iappAsd   = $8 // apical
+	iappUnits = $9 // Units 0-pA 1-uA/cm2
+	
+	//print $s1, $2, $3, $4, $5, $6, $7, $8, $9
+}
+
+endtemplate CellParam
+
+// TEMPLATE
+begintemplate CellParamSet
+
+public cellSet
+objref cellSet
+strdef name, tmpstr, tmpstr2
+
+proc init() { local N localobj fo, strFun
+
+	N         = 0	
+	iappSl    = 0
+	iappSh    = 0
+	iappSsd   = 0
+	iappAl    = 0
+	iappAh    = 0
+	iappAsd   = 0
+	iappUnits = 0
+	
+	cellSet  = new List()
+	strFun   = new StringFunctions()
+	
+	// READ cells
+	fo = new File("parameters/manycells.par")
+	fo.ropen()
+	
+	while(!fo.eof()) {
+	
+		fo.gets(tmpstr)
+		
+		// Find in tmpstr all that follows non-blank character, and store it in tmpstr2
+		strFun.tail(tmpstr, "[^\t]", tmpstr2)
+		
+		// Remove end of the line
+		strFun.head(tmpstr2, "\n", tmpstr2)
+		
+		// Process data if nonepty line
+		if (strFun.len(tmpstr2)>0 && strFun.substr(tmpstr, "//")==-1) {
+			
+			sscanf(tmpstr, "%[^,], %d, %lf, %lf, %lf, %lf, %lf, %lf, %d\n", name, &N,	&iappSl, &iappSh, &iappSsd, &iappAl, &iappAh, &iappAsd, &iappUnits)
+			cellSet.append(new CellParam( name, N, iappSl, iappSh, iappSsd, iappAl, iappAh, iappAsd, iappUnits) )
+		}
+	}
+		
+	fo.close()
+}
+	
+endtemplate CellParamSet

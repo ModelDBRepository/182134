@@ -1,0 +1,16 @@
+// Cell name, Number of cells, Low level of the soma injected current, 
+// High level of the soma injected current, Standard Deviation of the soma injected current,
+// Low level of the dendrite injected current, 
+// High level of the dendrite injected current, Standard Deviation of the dendrite injected current,
+// units 0-pA 1-uA/cm2
+// OLM may provide theta rhythm synchronization across lamellae, thus establishing a common ‘‘frame rate’’. (Berzhanskaya 06)
+//Pyr,	80,	0,		0,		94.2, 	 	217,	236,	94.2,	0 //makes loads of spikes
+//Pyr,	80,	0,		0,		94.2, 	 	100,	120,	94.2,	0 //makes no spikes except 101-120, 222-241, 343-362, 464-483 at 1.35 or so (OLM cells)
+//the next two are the basic start ups, was 0,0,94.2, 180,180, 94.2,0 but also had random delayed start that I 
+//never saw (up to 750 ms).  So I stopped delay and now it's pacemaking, so I turned it off
+Pyr,	80,	0,		0,		4.2, 	 	18,	18,	4.2,	0
+Bask,	20,	0.157,	0.157,	0.0,		0,		0,		0,		1
+OLM,	0,	-1,		-1,		2.6,		0,		0,		0,		1
+Ant,	10,	0,		0,		4.2, 	 	18,	18,	4.2,	0
+
+//turned off the OLM 7/8/08 was OLM 20

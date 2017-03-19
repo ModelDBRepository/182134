@@ -1,0 +1,181 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+// Definition of the synaptic properties in the network
+
+begintemplate SynParam
+
+public preCell, postCell, synName, tao1, tao2, Erev, synLocSec, synLoc, Npre, gmax, gmaxUnits, delay, synID, globalID, modFileName, r, start, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean
+
+strdef preCell, postCell, synName, modFileName
+
+proc init() {
+	
+	preCell     = $s1 // Name of the presynaptic cell, e.g. Pyr
+	postCell    = $s2 // Name of the postsynaptic cell, e.g Pyr
+	synName     = $s3 // Usually the type of the synamse eg. AMPA
+	tao1        = $4 
+	tao2        = $5
+	Erev        = $6
+	modFileName = $s7 // name of the used mod file, it is used in the syn.tmp
+	synLocSec   = $8  // ID 0->soma, 1->dendrite
+	synLoc      = $9  // [0-1]
+	Npre        = $10 // Number of the presynaptic connections from Pyr
+	gmax        = $11 // gmax for connections from Pyr
+	gmaxUnits   = $12 // gmax for connections from Pyr
+	delay       = $13 // delay for connections from Pyr
+	r           = $14 // NMDA/AMPA ratio
+	synID       = -2 //$14 // synaptic ID used to define the connections in the conn.dat files
+	globalID    = $15  // Global ID to identify the entity in SynParamSet
+
+}
+
+endtemplate SynParam
+
+
+// This object keeps the description of synapses in the public list "synSet"
+
+
+begintemplate SynParamSet
+
+public synSet
+objref synSet
+strdef preCell, postCell, synName, tmpstr, tmpstr2, modFileName
+
+proc init() { local i localobj fo, strFun
+	tao1      = 0
+	tao2      = 0
+	Erev      = 0
+	synLocSec = 0
+	synLoc    = 0
+	Npre      = 0
+	gmax      = 0
+	gmaxUnits = 0
+	delay     = 0
+	r         = 0
+	
+	synSet   = new List()
+	strFun   = new StringFunctions()
+	
+	// READ synapses
+	fo = new File("parameters/synapses.par")
+	fo.ropen()
+	while(!fo.eof()) {
+	
+		fo.gets(tmpstr)
+		
+		// Find in tmpstr all that follows non-blank character, and store it in tmpstr2
+		strFun.tail(tmpstr, "[^\t]", tmpstr2)
+		
+		// Remove end of the line
+		strFun.head(tmpstr2, "\n", tmpstr2)
+		
+		// Process data if nonepty line
+		if (strFun.len(tmpstr2)>0 && strFun.substr(tmpstr, "//")==-1) {
+		
+			sscanf(tmpstr, "%[^,], %[^,], %[^,], %lf, %lf, %lf, %[^,], %d, %lf, %d, %lf, %d, %*lf, %*lf\n", preCell, postCell, synName, &tao1, &tao2, &Erev, modFileName, &synLocSec, &synLoc, &Npre, &gmax, &gmaxUnits)
+			sscanf(tmpstr, "%*[^,], %*[^,], %*[^,], %*lf, %*lf, %*lf, %*[^,], %*d, %*lf, %*d, %*lf, %*d, %lf\n, %lf", &delay, &r)
+			
+			synSet.append(new SynParam( preCell, postCell, synName, tao1, tao2, Erev, modFileName, synLocSec, synLoc, Npre, gmax, gmaxUnits, delay, r, synSet.count()))
+			//printf("%s, %s, %s, %lf, %lf, %lf, %s, %d, %lf, %d, %lf, %d, %lf\n", preCell, postCell, synName, tao1, tao2, Erev, modFileName, synLocSec, synLoc, Npre, gmax, gmaxUnits, delay, synSet.count())
+		}
+	}
+	
+	fo.close()
+}
+
+endtemplate SynParamSet
+
+begintemplate NoisySynParam
+
+public postCell, modFileName, start, tao1, tao2, Erev, synLocSec, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean
+
+strdef postCell, modFileName
+
+proc init() {
+	
+	postCell    	= $s1 // Name of the postsynaptic cell, e.g Pyr
+	modFileName 	= $s2 // name of the used mod file, it is used in the syn.tmp
+	start			= $3
+	tao1        	= $4 
+	tao2        	= $5
+	Erev        	= $6
+	synLocSec   	= $7  
+	synLoc      	= $8  
+	spikedur        = $9 
+	spikefreq       = $10 
+	normalmean   	= $11 
+	normalstd       = $12 
+	weight			= $13 
+	poisson_mean 	= $14
+
+}
+
+endtemplate NoisySynParam
+
+
+begintemplate NoisySynParamSet
+
+public noisySynSet
+objref noisySynSet
+strdef postCell, tmpstr, tmpstr2, modFileName
+
+proc init() { local i localobj fo, strFun
+	start			= 0
+	tao1			= 0
+	tao2			= 0
+	Erev			= 0
+	synLocSec		= 0
+	synLoc			= 0
+	spikedur		= 0
+	spikefreq		= 0
+	normalmean		= 0
+	normalstd		= 0
+	weight			= 0
+	poisson_mean	= 0
+	
+	noisySynSet   = new List()
+	strFun   = new StringFunctions()
+	
+	// READ synapses
+	fo = new File("parameters/noisysynapses.par")
+	fo.ropen()
+	while(!fo.eof()) {
+	
+		fo.gets(tmpstr)
+		
+		// Find in tmpstr all that follows non-blank character, and store it in tmpstr2
+		strFun.tail(tmpstr, "[^\t]", tmpstr2)
+		
+		// Remove end of the line
+		strFun.head(tmpstr2, "\n", tmpstr2)
+		
+		//print tempstr, tempstr2
+		
+		// Process data if nonepty line
+		if (strFun.len(tmpstr2)>0 && strFun.substr(tmpstr, "//")==-1) {
+		
+			sscanf(tmpstr, "%[^,], %[^,], %lf, %lf, %lf, %lf, %d, %lf, %lf, %lf, %lf, %lf, %*lf, %*lf\n", postCell, modFileName, &start, &tao1, &tao2, &Erev, &synLocSec, &synLoc, &spikedur, &spikefreq, &normalmean, &normalstd, &weight, &poisson_mean)
+			//why this second line? the '*' consumes an element, but I don' understandn the point here...and why the placement of '\n'?
+			sscanf(tmpstr, "%*[^,], %*[^,], %*lf, %*lf, %*lf, %*lf, %*d, %*lf, %*lf, %*lf, %*lf, %*lf, %lf\n, %lf", &weight, &poisson_mean)
+			
+			//template for 'SynParam' defined above
+			noisySynSet.append(new NoisySynParam( postCell, modFileName, start, tao1, tao2, Erev, synLocSec, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean))
+			//printf("%s, %s, %s, %lf, %lf, %lf, %s, %d, %lf, %d, %lf, %d, %lf\n", preCell, postCell, synName, tao1, tao2, Erev, modFileName, synLocSec, synLoc, Npre, gmax, gmaxUnits, delay, synSet.count())
+		}
+	}
+	
+	fo.close()
+}
+
+endtemplate NoisySynParamSet

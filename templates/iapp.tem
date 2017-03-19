@@ -1,0 +1,185 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+begintemplate IApp
+
+public set, get, getloc, set_random, getConv, setValue, set_random_play
+
+objref  iapp, iappR, loc, rR, rC, rD
+
+
+
+
+// =================================================================================================
+//
+// init()
+//
+// ================================================================================================= 
+proc init() {
+
+    loc = new SectionRef()
+	loc.sec iappR = new IClamp(0.5)
+    loc.sec iapp  = new IClamp(0.5)
+}
+
+
+
+
+// =================================================================================================
+//
+// set()
+//
+// ================================================================================================= 
+proc set() {
+    //print "SET"
+    if (numarg()==1 || numarg()==2) {
+    
+        iapp.dur = 1e9        
+        iapp.del = 0
+
+        if (numarg()==2) iapp.del = $2
+
+        loc.sec iapp.amp = $1 * area(0.5) * 1e-5
+    
+    } else {
+        
+        print "USAGE: set( i (uA/cm2) )"
+        
+    }
+}
+
+
+
+
+// =================================================================================================
+//
+// getConv()
+//
+// ================================================================================================= 
+func getConv() { local c
+
+    loc.sec  c = area(0.5) * 1e-5 
+    return c
+}
+
+
+
+
+// ========================================================================
+//
+// setValue( i [nA], { del [ms]} )
+//
+// ========================================================================
+proc setValue() {
+    //print "SETVALUE"
+    if (numarg()==1 || numarg()==2) {
+    
+        iapp.dur = 1e9        
+        iapp.del = 0
+
+        if (numarg()==2) iapp.del = $2
+
+        loc.sec iapp.amp = $1
+    
+    } else {
+        
+        print "USAGE: set( i (nA) )"
+        
+    }
+}
+
+
+
+// =================================================================================================
+//
+// set_random_play(mean, sd, isUnitsPerCm2, gid)
+//
+// ================================================================================================= 
+proc set_random_play() {local mean, sd
+   
+   		mean          = $1
+   		sd            = $2
+   		isUnitsPerCm2 = $3
+   		
+   		//loc.sec print secname(), " mean=", mean, " sd=", sd, "UNITS:", isUnitsPerCm2
+   		
+   		if (isUnitsPerCm2) {
+   		// conversion from uA/cm2 to nA
+   			loc.sec mean = 1e-5 * mean * area(0.5)
+ 			loc.sec	sd   = 1e-5 * sd   * area(0.5)
+ 			
+   			//loc.sec print secname(), " mena=", mean, " sd=", sd 
+   		}else{
+   		// otherwise mean and sd are in pA, and need to be converted to nA
+   			mean = 1e-3 * mean
+   			sd   = 1e-3 * sd
+   			//loc.sec print secname(), " mean=", mean, " sd=", sd 
+   		}
+        
+        rD       = new Random((startsw()+$4)%10000)
+        
+        iappR.del     = 0 //rD.uniform(0, 750) //###changed to 0 7/8/8
+        iappR.dur     = 1e9
+        
+        //loc.sec print secname(), iappR.del
+        
+        rR = new Random((startsw()*$4)%10000)
+        rR.normal(mean, sd*sd)
+        rR.play(&iappR.amp)
+}
+
+
+
+
+// =================================================================================================
+//
+// set_random()
+//
+// ================================================================================================= 
+proc set_random() {
+   
+        rC       = new Random((startsw()+$1)%10000)
+        iapp.dur = rC.uniform(0, 500)      
+        iapp.del = 0
+        loc.sec iapp.amp = rC.uniform(-5, 5) * area(0.5) * 1e-5
+        //print "amp: ", iappR.amp, secname(), $1
+}
+
+
+
+
+// =================================================================================================
+//
+// getloc()
+//
+// ================================================================================================= 
+proc getloc() {
+    
+    loc.sec print secname() 
+}
+
+
+
+
+// =================================================================================================
+//
+// get()
+//
+// ================================================================================================= 
+proc get() {
+    loc.sec printf("iapp = %g (nA), loc= %s\n", iapp.amp, secname())
+}
+
+endtemplate IApp

@@ -1,0 +1,60 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+// Kopell, TABLE 2
+// preCell, postCell, synName, tao1, tao2, Erev, modFileName, synLocSec, synLoc, Npre, gmax, gmaxUnits, delay, r
+// gmaxUnits 0-mS, 1-mS/cm2
+
+//table 1 says Goe 5, Gie 5, Goi 0.1, Gii 0.3, Gi0 0.8, Geo 1, Gei 0.4, 
+//table 2 says     10,    5,     0.1,    0.2,      0.8,     0.3,   0.1.   Both also have diff Iapp
+
+// IE   the paper says this should be 0.7, 9.1 not 1.5 8.0, and why is ### the locsec -1?
+//pre,post,synName,tao1,tao2, Erev, modFileName, synLocSec, synLoc,Npre, 	gmax, gmaxUnits, delay, r
+Bask,	Pyr,	GABA,	1.5,	8.0,	-80,	Exp2Syn,		0,	0.5,	-1,	 	5.5,	0,	1.5,	-1
+// II
+Bask,	Bask,	GABA,	1.5,	8.0,	-80,	Exp2Syn,		0,	0.5,	1,		0.5,	1,	1.5,	-1
+
+// EI     7/27/09 change was to change the r below from 0 to different levels  up to 0.5, most between 0 to 0.1
+Pyr,	Bask,	NMDA,	25,	250,	0,	Exp2SynNMDA,		0,	0.5,	10,		0.5,	1,	1.5,	0
+//OE
+OLM,	Pyr,	GABA,	0.2,	20,	-80,	Exp2Syn,		3,	0.5,	0,		0.0,	0,	2,	-1
+// OI
+OLM,	Bask,	GABA,	0.2,	20,	-80,	Exp2Syn,		0,	0.5,	0,	 	0.0,	1,	0.1,	-1
+// IO
+Bask,	OLM,	GABA,	1.5,	8.0,	-80,	Exp2Syn,		0,	0.5,	0,	 	3.5,	1,	0.1,	-1
+// EO
+Pyr,	OLM,	NMDA,	5,	100,	0,	Exp2SynNMDA,	0,	0.5,	0,	2.1,		1,	0.1,	1
+//Pyr,	Bask,	AMPA,	0.05,	5.3,	0,	Exp2Syn,		0,	0.5,	40,		0,	1,	0.1,	-1
+//Pyr,	OLM,	AMPA,	0.05,	5.3,	0,	Exp2Syn,		0,	0.5,	40,		0,	1,	0.1,	-1
+
+Noise, Pyr, AMPA, 0.05, 5.3, 	0, 	Exp2Syn, 		1, 	0.5, 	1, 		0.1, 	1, 	0.1, 	-1
+// I had originally placed the gmax at 5.5 like the bask to pyr, and it gave 10 ms long response. Now I have
+// switched it to 0.4 like EI, but this was arbitrary.  It makes AP every time.
+// so now I've switched it to 0.01
+Noise, Bask, AMPA, 0.05, 5.3, 0, 	Exp2Syn, 		0, 	0.5, 	1, 		0.1, 	1, 	0.1, 	-1
+//for this last one, it is a signal from elsewhere, synapsing on A1, with high signal strength
+//it is also used for rec synapses, ####but maybe the delay should be tweaked (0.1 too fast?)
+
+Pyr, Pyr, AMPA,  0.05, 5.3, 0, Exp2Syn, 		1, 	0.5, 	1, 		0.1, 	1, 	0.1, 	-1 
+//The above line is the normal line for recurrent axons for conn.dat type 9. Note the gmax is VERY low
+
+//the below line is manyconn_AMPA.dat with smaller basket-pyr conns on A3 as antennae
+//Bask, Pyr, AMPA,  0.05, 5.3, 0, Exp2Syn, 		3, 	0.5, 	1, 		0.01, 	1, 	0.1, 	-1
+
+//for these gap junctions, the only items of interest are the synLocSec and gmax.  as of 6/08 the LocSec is not implemented
+//it would take some tweaking to use it, as the synparamset is not freely accessible during the connectnetwork()
+Bask, Bask,   	gap, 	0, 0, 0, 	Exp2Syn, 		0, 	0.5, 	1, 		0.0001, 	1, 	0.1, 	-1
+//for bask, .0001 is tight coupling, .00001 is very loose   Can also use this as a second type of gaps, like linear gaps in Drivers
+// and next one for gaps from Drivers to neighbors
+Pyr, Pyr,   	gap, 	0, 0, 0, 	Exp2Syn, 		1, 	0.5, 	1, 		0.01, 	1, 	0.1, 	-1
+//for pyr, .01 is high coupling, .001 is very low

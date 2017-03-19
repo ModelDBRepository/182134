@@ -1,0 +1,278 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+/*{load_file("syn.tem")}
+{load_file("gap.tem")}
+{load_file("iapp.tem")}
+{load_file("../externals.hoc")}*/
+
+begintemplate Bwb
+
+external cvode, Tstop, doextra, vectorbuffersize
+
+// PUBLIC VARIABLES
+public x, y, z
+
+// PUBLIC OBJECTS
+public soma, spiketimes, idvec, synS, gapS, iappS, synlist, noisysynlist, recordT, voltageRecS, extraRec, TRec
+
+//PUBLIC METHODS
+public position, getlocoS, connect2target, recordVoltage, is_art, addSynS, addNoisySynS, getTotalArea
+public setScatteredVoltages, writeVoltage, writeField, fieldrec
+
+create soma    
+
+objref iappS, synS, gapS, locS, voltageRecS, recordT, extraRec, TRec
+objref spiketimes, idvec, nil, synlist, noisysynlist
+
+strdef cmd
+
+// =================================================================================================
+//
+// init(mean, sd, isUnitsPerCm2, gid)
+//
+// =================================================================================================
+proc init() {
+    
+    createCell()
+        
+    access soma
+    
+    synlist = new List()
+	noisysynlist=new List()
+    locS    = new SectionRef()
+    iappS   = new IApp()
+    synS    = new SynObj()
+    gapS    = new GapObj()
+    
+    spiketimes  = new Vector()
+    idvec       = new Vector()
+    voltageRecS = new Vector()
+    recordT     = new Vector()
+    extraRec	= new Vector()
+    //TRec	= new Vector()
+    extraRec.buffer_size(vectorbuffersize)
+    recordT.buffer_size(vectorbuffersize)
+    voltageRecS.buffer_size(vectorbuffersize)
+    
+    iappS.set_random_play($2, $3, $4, $1)
+}
+
+
+
+
+
+
+// =================================================================================================
+//
+// recordVoltage()
+//
+// =================================================================================================
+proc recordVoltage() {
+		
+		//print "Started RECORDING VOLTAGE at Bask"	
+		soma  cvode.record(&v(0.5), voltageRecS, recordT )
+		//soma  cvode.record(&iappS.iappR.amp, voltageRecS, recordT )
+}
+
+
+proc fieldrec() {
+	forall if (ismembrane("xtra")) {
+		//print secname()
+		//for (x,0) cvode.record(&er_xtra(x), extraRec, TRec)
+		for (x,0) extraRec.record(&er_xtra(x))
+	}
+}
+
+
+
+// =================================================================================================
+//
+// writeVoltage(gid)
+//
+// =================================================================================================
+proc writeVoltage() { local i localobj fo, m
+
+	//print "SIZE:", t, " ", recordT.size()
+
+	m = new Matrix(recordT.size(), 2)
+
+	m.setcol(0, recordT)
+	m.setcol(1, voltageRecS)
+
+	fo = new File()
+	
+	sprint(cmd, "data/%d_voltage_b%4.2f_p%5.3f_g%d_f%d.dat", $1,$2,$3,$4,$5,$6)
+	
+	if($6 < 1e-6) {  //if t_curr is zero, then over-write any old file of the same name with a new file; otherwise, append to the old file
+		fo.wopen(cmd)
+	} else { fo.aopen(cmd) }
+	
+	{m.fprint(0, fo, "%9.6lf ")}
+	
+	{fo.close()}
+}
+
+proc writeField() { local i localobj fo, m
+
+	m = new Matrix(recordT.size(), 2)
+
+	m.setcol(0, recordT)
+	m.setcol(1, extraRec)
+
+	fo = new File()
+	
+	sprint(cmd, "data/%d_field_b%4.2f_p%5.3f_g%d_f%d.dat", $1,$2,$3,$4,$5,$6)
+
+	if($6 < 1e-6) {  //if t_curr is zero, then over-write any old file of the same name with a new file; otherwise, append to the old file
+		fo.wopen(cmd)
+	} else { fo.aopen(cmd) }
+	
+	m.fprint(0, fo, "%9.6lf ")
+	
+	fo.close()
+}
+
+
+// ========================================================================
+//
+// getTotalArea()
+//
+// ========================================================================
+func getTotalArea() {
+	
+	return totalArea
+}
+
+
+
+
+// =================================================================================================
+//
+// connect2target()
+//
+// =================================================================================================
+proc connect2target() { //$o1 target point process, $o2 returned NetCon
+  
+  soma $o2 = new NetCon(&v(0.5), $o1, 0 ,0, 0)
+  
+  if (numarg()==2) synS.addNetCon($o2)
+}
+
+
+
+// =================================================================================================
+//
+// createCell()
+//
+// =================================================================================================
+proc createCell() {
+
+    totalArea = 100 // um2
+
+    soma {
+        nseg  = 3
+        cm    = 1      // uF/cm2
+        diam  = sqrt(totalArea) // um
+        L     =  diam/PI  // um
+    
+        insert pas
+            e_pas = -65     // mV
+            g_pas = 0.1e-3  // S/cm2 
+	
+	if(doextra){
+		insert extracellular
+		insert xtra
+	}
+  
+        insert Nafbwb
+        insert Kdrbwb
+    }
+}
+
+
+
+
+// ========================================================================
+//
+// addSynS( tau1 (ms), tau2 (ms), Erev (mV), synapseName, synLoc )
+//
+// ========================================================================
+func addSynS() {
+    
+    synlist.append(synS.synList.object( synS.addSyn( $1, $2, $3, $s4, $5)  ) )
+	return synlist.count()-1
+}
+
+
+//====================================================
+//noisy synapses
+//=====================================================
+
+//this adds a noisy synapse (defined in noisesyn.mod) to the soma
+proc addNoisySynS() {
+	noisysynlist.append(synS.noisySynList.object( synS.addNoisySyn($s1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)  ) )
+}
+
+
+// =================================================================================================
+//
+// setScatteredVoltages(low, high)
+//
+// =================================================================================================
+proc setScatteredVoltages() { localobj rand
+
+  rand = new Random(startsw())
+  rand.uniform($1,$2)
+
+  forall v = rand.repick()
+}
+
+
+
+
+// =================================================================================================
+//
+// getlocoS()
+//
+// =================================================================================================
+obfunc getlocoS() { return locS }
+
+
+
+
+
+
+// =================================================================================================
+//
+// position()
+//
+// =================================================================================================
+proc position() { x=$1 y=$2 z=$3 }
+
+
+
+
+// =================================================================================================
+//
+// is_art()
+//
+// =================================================================================================
+func is_art() { return 0}
+
+
+
+
+endtemplate Bwb

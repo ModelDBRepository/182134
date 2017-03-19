@@ -1,0 +1,300 @@
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+//
+// NOTICE OF COPYRIGHT AND OWNERSHIP OF SOFTWARE
+//
+// Copyright 2007, The University Of Pennsylvania
+// 	School of Engineering & Applied Science.
+//   All rights reserved.
+//   For research use only; commercial use prohibited.
+//   Distribution without permission of Maciej T. Lazarewicz not permitted.
+//   mlazarew@seas.upenn.edu
+//
+//%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+
+begintemplate SynObj
+
+public addSyn, addNoisySyn, printSyn, printLoc, connect2syn, printCon, getSyn, addNetCon, addSynStim, removeConnections, conList, synList, noisySynList
+
+objref  synList, noisySynList, conList, loc, stimList, this
+ 
+strdef cmd
+ 
+ 
+// =================================================================================================
+//
+// init()
+//
+// =================================================================================================
+proc init() {
+    synList  = new List()
+	noisySynList = new List()
+    conList  = new List()
+    stimList = new List()
+
+    loc = new SectionRef()
+}
+
+
+
+
+// =================================================================================================
+//
+// connect2syn
+//
+// =================================================================================================
+proc connect2syn() {
+
+    if (numarg()==5) {
+        
+        conList.prepend( new NetCon($o1,  synList.object($2), $3, $4, $5 ) )
+    
+    } else {
+        
+        print "USAGE: connect2syn(src obj, syn nr, threshold, delay, weight)"
+        
+    }
+}
+
+
+
+
+// =================================================================================================
+//
+// removeConnections
+//
+// =================================================================================================
+proc removeConnections() {
+
+	conList.remove_all()
+}
+
+
+
+
+// =================================================================================================
+//
+// addNetCon(nc, threshold, delay, weight) - for MPI
+//
+// =================================================================================================
+proc addNetCon() {
+
+    if (numarg()==1 || numarg()==4 ) {
+    
+        conList.prepend($o1)
+    
+        if (numarg()==4) {
+  
+                $o1.threshold = $2
+                $o1.delay     = $3
+                $o1.weight    = $4
+        
+        }
+        
+    } else {
+        
+        print "USAGE: connect(nc, [threshold, delay, weight])"
+        
+    }
+}
+
+
+
+
+// =================================================================================================
+//
+// addSyn( tau1 (ms), tau2 (ms), Erev (mV), mode, synLoc )
+//
+// mode: 2 - NMDA
+// =================================================================================================
+func addSyn() {
+
+    last = synList.count()
+    
+    if (numarg()==5) {
+        show_errmess_always(1)
+        sprint(cmd, "loc.sec synList.append(new %s(%g))", $s4, $5)
+        execute1(cmd, this)
+    	//if ($4==0) loc.sec synList.append(new Exp2Syn($5))
+        //if ($4==1) loc.sec synList.append(new Exp2SynAMPA($5))
+        //if ($4==2) loc.sec synList.append(new Exp2SynNMDA($5))
+        //if ($4==3) loc.sec synList.append(new Exp2SynNMDAperm($5))
+            
+        synList.o(last).tau1 = $1
+        synList.o(last).tau2 = $2
+        synList.o(last).e    = $3
+        //loc.sec printf("%s %s(%g) %g %g %g\n", secname(), $s4, $5, synList.o(last).tau1, synList.o(last).tau2, synList.o(last).e)
+        return (last)
+
+    } else {
+        
+        print "USAGE: addSyn(tau1 (ms), tau2 (ms), eRev (mV), modFileName, synLoc)"
+        return -1
+    }
+}
+
+
+//adds a noisy synapse (noisesyn.mod); this function is modeled after the above function  'addSyn'
+func addNoisySyn() {
+	last = noisySynList.count()
+	
+	if(numarg()==12) {
+		show_errmess_always(1)
+		sprint(cmd,"loc.sec noisySynList.append(new %s(%g))",$s1,$6)
+		execute1(cmd, this)
+		
+		noisySynList.o(last).start = $2
+		noisySynList.o(last).tau1 = $3
+		noisySynList.o(last).tau2 = $4
+		noisySynList.o(last).e = $5
+		noisySynList.o(last).spikedur = $7
+		noisySynList.o(last).spikefreq = $8
+		noisySynList.o(last).normalmean = $9
+		noisySynList.o(last).normalstd = $10
+		noisySynList.o(last).weight = $11
+		noisySynList.o(last).poisson_mean = $12
+		
+		return last
+	} else {
+		print "USAGE: addNoiseSyn(modFileName, start, tau1, tau2, eRev, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean \n"
+		return -1
+	}
+}
+
+
+
+// =================================================================================================
+//
+// addSynStim
+//
+// =================================================================================================
+func addSynStim() {
+        
+    if (numarg()==9 || numarg()==10) {
+
+            tau1  = $1
+            tau2  = $2
+            eRev  = $3
+            f     = $4
+            nr_sp = $5
+            start = $6
+            noise = $7
+            g     = $8
+            gid   = $9
+
+            if (numarg()==9){
+    
+                stim_syn_nr = addSyn(tau1, tau2, eRev)
+            
+            }else{
+                
+                syn_mode = $10
+                stim_syn_nr = addSyn(tau1, tau2, eRev, syn_mode)
+
+            }
+
+            loc.sec stimList.append(new NetStim())
+            last  = stimList.count()
+            
+            if (f>0) {
+
+                stimList.o(last-1).interval = 1000/f
+                stimList.o(last-1).number   = nr_sp
+
+            }else{
+
+                stimList.o(last-1).interval = 1
+                stimList.o(last-1).number   = 0
+
+            }
+
+            stimList.o(last-1).start    = start
+            stimList.o(last-1).noise    = noise
+            stimList.o(last-1).seed((startsw()*gid)%10000)
+
+            connect2syn(stimList.o(last-1), stim_syn_nr, 0, 0, g)
+        
+            return stim_syn_nr
+
+    } else {
+        
+        print "USAGE: addSynStim(tau1 (ms), tau2 (ms), eRev (mV), f (Hz), number spikes, start time (ms), noise <0-1>, g (nS), gid )"
+        return -1
+    }
+
+}
+
+
+
+
+// =================================================================================================
+//
+// printLoc
+//
+// =================================================================================================
+proc printLoc() {
+    
+    loc.sec print secname() 
+}
+
+
+
+
+// =================================================================================================
+//
+// getSyn(nr) - return reference to the synapse #nr
+//
+// =================================================================================================
+obfunc getSyn() {
+    
+    return synList.object($1)
+}
+
+
+
+
+// =================================================================================================
+//
+// printSyn
+//
+// =================================================================================================
+proc printSyn() {
+    for i=0, synList.count()-1 {
+        loc.sec printf("%d, %s, tau1= %g ms, tau2= %g ms, e= %g mV loc= %s\n", i, synList.object(i), synList.object(i).tau1, synList.object(i).tau2, synList.object(i).e, secname() )
+    }
+}
+
+
+
+
+strdef xs, ys
+objref c, c1
+
+// =================================================================================================
+//
+// printCon
+//
+// =================================================================================================
+proc printCon() {
+
+    
+    for i=0, conList.count()-1 {
+        c  = conList.object(i)
+        x  = c.preloc
+        xs = secname()
+        pop_section()
+        y  = c.postloc()
+        ys = secname()
+        pop_section()
+        c1 = c.syn()
+        
+        loc.sec printf("%d, %s(%g) -> %s(%g) %s, tau1= %g (ms), tau2= %g (ms), eRev= %g (mV), loc= %s\n", i, xs, x, ys, y, c1, c1.tau1, c1.tau2, c1.e,  secname() )
+        
+    }
+}
+
+
+
+
+endtemplate SynObj

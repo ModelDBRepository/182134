@@ -1,0 +1,8 @@
+
+//  for externals
+
+Tstop = 200
+t_seg = 50   //segment of time which is integrated before dumping data to files
+doextra = 1
+//vectorbuffersize = Tstop/.025+1   // .025 is dt, sometimes it's +1
+vectorbuffersize = t_seg/.025+1   // .025 is dt, sometimes it's +1
