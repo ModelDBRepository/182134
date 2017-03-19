@@ -4,6 +4,6 @@
 //Set the start time of the noise synapse on the antenna cell and basket cell to 1e9 so that it never activates; user can activte in hoc by resetting start time
 //
 //cell type, modFileName, start,tau1,tau2,Erev, synLocSec, synLoc, spikedur, spikefreq, normalmean, normalstd, weight, poisson_mean
-Pyr,	noisesyn,	50,	0.05,	5.3,	0,	1,	0.5,	75,	5,	0,	7,	0.00053407075,	0.8
-Bask,	noisesyn, 	50,	0.05,	5.3,	0,	0,	0.5,	75,	5,	0,	7,	0.00001,	0.8
+Pyr,	noisesyn,	50,	0.05,	5.3,	0,	1,	0.5,	35,	5,	0,	7,	0.00053407075,	0.8
+Bask,	noisesyn, 	50,	0.05,	5.3,	0,	0,	0.5,	35,	5,	0,	7,	0.00001,	0.8
 Ant,	noisesyn,	1e9,	0.05,	5.3,	0,	1,	0.5,	250,	2,	0,	15,	0.00053407075,	0.8

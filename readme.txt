@@ -68,6 +68,7 @@ the mean inter-event intervals of stimulation in the "down" state.
 
 In Figs. 4F-I, we set pyrspiketau_vec=0.1, pyr_nospike_tau=1.0, and baskspike_tau=bask_nospike_tau=6.0.
 In Figs. 4A-D, we set pyrspiketau_vec=pyr_nospike_tau=1.0, and baskspike_tau=0.60, and bask_nospike_tau=6.0.
+For both Figs. 4A-D and 4F-I, we set spikedur=35.0 in noisysynapses.par.
 
 In Fig. 5, we set pyrspiketau_vec=0.1, pyr_nospike_tau=1.0, and baskspike_tau=bask_nospike_tau=6.0, and 
 scanned over values of baskconnvector (defined in line 65 of real2.hoc) from 0 to 100, counting by 10.
@@ -82,3 +83,41 @@ The number of antenna cells can be set in the file manycells.par.
 For other simulation details, please see the documentation accompanying the earlier models 
 (ModelDB accession numbers 135902 and 135903).
 
+20170319 updates provided by Christian Fink mention the spikedur=35
+fig 4 subpanel settings in noisysynapses.par in the readme
+(above). Also the original settings in the model to 1e9 were explained:
+
+The old default parameters (pyr_nospike_tau=bask_nospike_tau=1e9) did
+not correspond to any figure or discussion result from the text. We
+included them as the default parameters, however, because they
+represent the "simplest" down state, in which the network is not being
+stimulated at all (the LFP flatlines at the end of simulations if
+these parameters are set to 1e9).
+
+A spkplt.hoc program Michael Hines created in the Traub et al. 2005
+NEURON version
+https://senselab.med.yale.edu/ModelDB/showmodel.cshtml?model=82894&file=/nrntraub/spkplt.hoc#tabs-2
+can be used to create raster plots.  Since it reads NEURON
+formatvector dat spike files it needs the total number of points as
+the first number in the file. Create in linux/unix with commands like
+
+data $ wc *
+    8001   16002  172022 extra_b6.00_p0.100_g5.50_f0.dat
+    8001   16002  172022 extraactive_b6.00_p0.100_g5.50_f0.dat
+    8001   16002  172022 extraantenna_b6.00_p0.100_g5.50_f0.dat
+      13      18     217 parameters_b6.00_p0.10_g0_f5.dat
+       1       1      33 spikelog.dat
+    1452    3785   21663 spikes_b6.00_p0.10_g5.50_f0.dat
+       1       1      30 sumlog.dat
+   25470   51811  538009 total
+data $ cat > spikes.dat
+1452
+data $ cat spikes_b6.00_p0.10_g5.50_f0.dat >> spikes.dat
+data $ cd ..
+data $ nrngui spkplt.hoc
+...
+oc>chdir("data")
+oc>grspk=new Graph()
+oc>spkplt("spikes.dat",3,4)
+read 1452 spikes
+oc>

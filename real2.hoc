@@ -61,7 +61,7 @@ gind_start=0  //global index at which to start, in the parameter sweep
 {baskconnvector = new Vector()}
 {ipspg_vec = new Vector()}
 {pyrspiketau_vec.append(0.10)} //mean time between arrival of noise events to pyramidal cells (so smaller number implies more intense noise)
-{baskspiketau_vec.append(1e9)}  //mean time between arrival of noise events to basket cells (so smaller number implies more intense noise)
+{baskspiketau_vec.append(6.0)}  // 1e9 orig.: mean time between arrival of noise events to basket cells (so smaller number implies more intense noise)
 {baskconnvector.append(0)}    //controls what percentage of possible connections from basket cells to pyramidal cells are realized
 {ipspg_vec.append(5.5)}  //gmax for bask->pyr synapses, which goes into _f# in the filename
 //29 was old method
@@ -120,9 +120,9 @@ func onerun() {local id, num, ipspg, pyrthr, basketthr, pyr_spike_tau, bask_spik
 	normmean=0    //can set this to $5 if useful in the future
 
 	pyr_spike_tau=$1
-	pyr_nospike_tau=1e9
+	pyr_nospike_tau=1.0 // 1e9
 	bask_spike_tau=$2
-	bask_nospike_tau=1e9
+	bask_nospike_tau=6.0 // 1e9
 	{ pr.activatePyrSynapses(pyr_spike_tau,pyr_nospike_tau) }
 	{ pr.activateAntSynapses(pyr_spike_tau,pyr_nospike_tau) }
 	{ pr.activateBaskSynapses(bask_spike_tau,bask_nospike_tau) }
